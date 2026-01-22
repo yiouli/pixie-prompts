@@ -1,0 +1,113 @@
+[tool.poetry]
+name = "pixie-prompts"
+packages = [
+    { include = "pixie" },
+]
+
+version = "0.0.0"  # Managed by setuptools-scm
+description = "Code-first, type-safe prompt management"
+authors = ["Yiou Li <yol@gopixie.ai>"]
+license = "MIT"
+readme = "README.md"
+
+[tool.poetry.urls]
+Homepage = "https://gopixie.ai"
+Repository = "https://github.com/yiouli/pixie-prompts"
+Documentation = "https://yiouli.github.io/pixie-prompts/"
+Issues = "https://github.com/yiouli/pixie-prompts/issues"
+Changelog = "https://github.com/yiouli/pixie-prompts/commits/main/"
+
+[tool.poetry.dependencies]
+python = ">=3.10,<4.0"
+pydantic = "^2.12.5"
+jsonsubschema = "^0.0.7"
+jinja2 = "^3.1.6"
+fastapi = {version =">=0.128.0", optional = true}
+strawberry-graphql = {version = ">=0.288.1", optional = true}
+uvicorn = {version = ">=0.40.0", optional = true}
+colorlog = {version = ">=6.10.1", optional = true}
+dotenv = {version = ">=0.9.9", optional = true}
+
+[tool.poetry.extras]
+server = ["fastapi", "strawberry-graphql", "uvicorn", "colorlog", "dotenv"]
+
+[tool.poetry.group.dev.dependencies]
+pytest = ">=7.4,<9.0"
+pytest-timeout = "^2.1.0"
+pytest-xdist = "^3.3.1"
+pytest-asyncio = ">=0.21.1,<1.2.0"
+pytest-httpserver = "^1.0.8"
+ruff = ">=0.1.8,<0.13.0"
+mypy = "^1.0.0"
+
+[tool.poetry.group.docs.dependencies]
+pdoc = "^15.0.4"
+
+[build-system]
+requires = ["poetry-core>=1.0.0", "setuptools-scm>=8.0"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.setuptools_scm]
+write_to = "pixie/prompts/_version.py"
+
+[tool.pytest.ini_options]
+log_cli = true
+
+[tool.mypy]
+python_version = "3.12"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+check_untyped_defs = true
+disallow_untyped_decorators = true
+no_implicit_optional = true
+warn_redundant_casts = true
+warn_unused_ignores = false
+warn_no_return = true
+warn_unreachable = true
+strict_equality = true
+show_error_codes = true
+
+# Performance optimizations for CI
+cache_dir = ".mypy_cache"
+sqlite_cache = true
+incremental = true
+show_column_numbers = true
+
+[[tool.mypy.overrides]]
+module = [
+    "langchain.*",
+    "openai.*",
+    "chromadb.*",
+    "tiktoken.*",
+    "google.*",
+    "anthropic.*",
+    "cohere.*",
+    "dashscope.*",
+    "pymongo.*",
+    "bson.*",
+    "boto3.*",
+    "llama_index.*",
+    "respx.*",
+    "bs4.*",
+    "lark.*",
+    "huggingface_hub.*",
+    "backoff.*",
+    "wrapt.*",
+    "packaging.*",
+    "requests.*",
+    "opentelemetry.*"
+]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = [
+    "langfuse.api.resources.*",
+    "langfuse.api.core.*",
+    "langfuse.api.client"
+]
+ignore_errors = true
+
+[tool.poetry.scripts]
+pixie-prompts = "pixie.prompts.server:main"
