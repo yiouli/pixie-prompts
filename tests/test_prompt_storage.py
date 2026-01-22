@@ -1,6 +1,7 @@
 """Comprehensive unit tests for pixie.prompts.storage module."""
 
 import json
+import logging
 import os
 import tempfile
 import pytest
@@ -8,7 +9,7 @@ from types import NoneType
 from typing import Dict
 
 from pixie.prompts.prompt import BaseUntypedPrompt, BasePrompt, _prompt_registry
-from pixie.prompts.storage import _FilePromptStorage
+from pixie.prompts.storage import PromptLoadError, _FilePromptStorage
 
 
 def write_prompt_folder(
@@ -156,8 +157,12 @@ class TestFilePromptStorage:
         with open(metadata_path, "w") as f:
             f.write("invalid json content")
 
-        with pytest.raises(json.JSONDecodeError):
+        with pytest.raises(PromptLoadError) as excinfo:
             _FilePromptStorage(temp_dir)
+
+        failures = excinfo.value.failures
+        assert len(failures) == 1
+        assert isinstance(failures[0].error, json.JSONDecodeError)
 
     def test_init_handles_missing_versions(self, temp_dir: str):
         """Test that __init__ raises ValueError for missing versions in JSON."""
@@ -167,8 +172,58 @@ class TestFilePromptStorage:
         with open(metadata_path, "w") as f:
             json.dump({"defaultVersionId": "default", "variablesSchema": {}}, f)
 
-        with pytest.raises(KeyError):
+        with pytest.raises(PromptLoadError) as excinfo:
             _FilePromptStorage(temp_dir)
+
+        failures = excinfo.value.failures
+        assert len(failures) == 1
+        assert isinstance(failures[0].error, KeyError)
+
+    def test_load_isolates_failures_and_loads_valid_prompts(self, temp_dir: str):
+        """Valid prompts load even when others fail, with aggregated error reported."""
+        # Valid prompt
+        write_prompt_folder(
+            temp_dir,
+            "prompt1",
+            versions={"v1": "Hello {name}"},
+            default_version_id="v1",
+            variables_schema={"type": "object", "properties": {}},
+        )
+
+        # Invalid prompt (missing metadata keys)
+        broken_dir = os.path.join(temp_dir, "broken")
+        os.makedirs(broken_dir, exist_ok=True)
+        with open(os.path.join(broken_dir, "metadata.json"), "w") as f:
+            json.dump({"variablesSchema": {}}, f)
+
+        storage = _FilePromptStorage(temp_dir, raise_on_error=False)
+        assert storage.exists("prompt1") is True
+        assert storage.exists("broken") is False
+        assert len(storage.load_failures) == 1
+
+        # Reload with raising enabled to surface aggregated error while keeping valid prompt loaded
+        with pytest.raises(PromptLoadError) as excinfo:
+            storage.load()
+
+        assert len(excinfo.value.failures) == 1
+        assert storage.exists("prompt1") is True
+        assert storage.get("prompt1").id == "prompt1"
+
+    def test_load_logs_failures(self, temp_dir: str, caplog):
+        """Errors are logged and summarized when loading prompts."""
+        broken_dir = os.path.join(temp_dir, "broken")
+        os.makedirs(broken_dir, exist_ok=True)
+        with open(os.path.join(broken_dir, "metadata.json"), "w") as f:
+            f.write("{invalid_json}")
+
+        storage = _FilePromptStorage(temp_dir, raise_on_error=False)
+        caplog.clear()
+        with caplog.at_level(logging.WARNING):
+            storage.load(raise_on_error=False)
+
+        messages = [record.getMessage() for record in caplog.records]
+        assert any("Failed to load prompt" in msg for msg in messages)
+        assert any("failure(s)" in msg for msg in messages)
 
     @pytest.mark.asyncio
     async def test_exists_returns_true_for_existing_prompt(
@@ -1326,6 +1381,10 @@ class TestInitializePromptStorage:
         with open(corrupted_file, "w") as f:
             f.write("{invalid_json}")
 
-        # Initialize storage - should raise JSONDecodeError when loading corrupted file
-        with pytest.raises(json.JSONDecodeError):
+        # Initialize storage - should raise aggregated error while still attempting other prompts
+        with pytest.raises(PromptLoadError) as excinfo:
             initialize_prompt_storage(temp_dir)
+
+        failures = excinfo.value.failures
+        assert len(failures) == 1
+        assert isinstance(failures[0].error, json.JSONDecodeError)

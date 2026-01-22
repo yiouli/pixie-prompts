@@ -1,6 +1,7 @@
 import json
 import logging
 import os
+from dataclasses import dataclass
 from types import NoneType
 from typing import Any, Dict, Protocol, Self, TypedDict
 
@@ -18,9 +19,28 @@ from .prompt import (
 logger = logging.getLogger(__name__)
 
 
+@dataclass(frozen=True)
+class _PromptLoadFailure:
+    prompt_id: str | None
+    path: str
+    error: Exception
+
+
+class PromptLoadError(Exception):
+
+    def __init__(self, failures: list[_PromptLoadFailure]):
+        self.failures = failures
+        message_lines = [
+            f"- {failure.prompt_id or '<unknown>'} ({failure.path}): {failure.error}"
+            for failure in failures
+        ]
+        message = "Failed to load prompts:\n" + "\n".join(message_lines)
+        super().__init__(message)
+
+
 class PromptStorage(Protocol):
 
-    def load(self) -> None: ...
+    def load(self, *, raise_on_error: bool = True) -> list[_PromptLoadFailure]: ...
 
     def exists(self, prompt_id: str) -> bool: ...
 
@@ -36,44 +56,72 @@ class _BasePromptMetadata(TypedDict):
 
 class _FilePromptStorage(PromptStorage):
 
-    def __init__(self, directory: str) -> None:
+    def __init__(self, directory: str, *, raise_on_error: bool = True) -> None:
         self._directory = directory
         self._prompts: Dict[str, BaseUntypedPrompt] = {}
-        self.load()
+        self._load_failures: list[_PromptLoadFailure] = []
+        self.load(raise_on_error=raise_on_error)
 
-    def load(self) -> None:
-        """prompts that are in storage"""
+    def load(self, *, raise_on_error: bool = True) -> list[_PromptLoadFailure]:
+        """Load prompts from storage with error isolation.
+
+        Continues loading valid prompts even if some fail and aggregates failures.
+        """
+        logger.info("Loading prompts from directory %s", self._directory)
         self._prompts.clear()
+        self._load_failures = []
         if not os.path.exists(self._directory):
             os.makedirs(self._directory)
         for entry in os.listdir(self._directory):
             prompt_path = os.path.join(self._directory, entry)
             if not os.path.isdir(prompt_path):
+                logger.debug("Skipping non-directory entry at %s", prompt_path)
                 continue
+            try:
+                metadata_path = os.path.join(prompt_path, "metadata.json")
+                with open(metadata_path, "r") as f:
+                    metadata: _BasePromptMetadata = json.load(f)
 
-            metadata_path = os.path.join(prompt_path, "metadata.json")
-            with open(metadata_path, "r") as f:
-                metadata: _BasePromptMetadata = json.load(f)
+                versions: dict[str, str] = {}
+                for filename in os.listdir(prompt_path):
+                    if not filename.endswith(".mustache"):
+                        continue
+                    version_id, _ = os.path.splitext(filename)
+                    version_path = os.path.join(prompt_path, filename)
+                    with open(version_path, "r") as vf:
+                        versions[version_id] = vf.read()
 
-            versions: dict[str, str] = {}
-            for filename in os.listdir(prompt_path):
-                if not filename.endswith(".mustache"):
-                    continue
-                version_id, _ = os.path.splitext(filename)
-                version_path = os.path.join(prompt_path, filename)
-                with open(version_path, "r") as vf:
-                    versions[version_id] = vf.read()
+                if not versions:
+                    raise KeyError("No versions provided for the prompt.")
 
-            if not versions:
-                raise KeyError("No versions provided for the prompt.")
-
-            prompt = BaseUntypedPrompt(
-                id=entry,
-                versions=versions,
-                default_version_id=metadata["defaultVersionId"],
-                variables_schema=metadata["variablesSchema"],
+                prompt = BaseUntypedPrompt(
+                    id=entry,
+                    versions=versions,
+                    default_version_id=metadata["defaultVersionId"],
+                    variables_schema=metadata["variablesSchema"],
+                )
+                self._prompts[entry] = prompt
+                logger.debug(
+                    "Loaded prompt '%s' with %d version(s)", entry, len(versions)
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.exception("Failed to load prompt '%s' at %s", entry, prompt_path)
+                self._load_failures.append(
+                    _PromptLoadFailure(prompt_id=entry, path=prompt_path, error=exc)
+                )
+        if self._load_failures:
+            logger.warning(
+                "Completed loading prompts with %d failure(s)", len(self._load_failures)
             )
-            self._prompts[entry] = prompt
+            if raise_on_error:
+                raise PromptLoadError(self._load_failures)
+        else:
+            logger.info("Loaded %d prompt(s) successfully", len(self._prompts))
+        return list(self._load_failures)
+
+    @property
+    def load_failures(self) -> list[_PromptLoadFailure]:
+        return list(self._load_failures)
 
     def exists(self, prompt_id: str) -> bool:
         return prompt_id in self._prompts
@@ -135,8 +183,11 @@ def initialize_prompt_storage(directory: str) -> None:
     global _storage_instance
     if _storage_instance is not None:
         raise RuntimeError("Prompt storage has already been initialized.")
-    _storage_instance = _FilePromptStorage(directory)
-    logger.info(f"Initialized prompt storage at directory: {directory}")
+    storage = _FilePromptStorage(directory, raise_on_error=False)
+    _storage_instance = storage
+    logger.info("Initialized prompt storage at directory: %s", directory)
+    if storage.load_failures:
+        raise PromptLoadError(storage.load_failures)
 
 
 class StorageBackedPrompt(Prompt[TPromptVar]):
