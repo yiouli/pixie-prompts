@@ -1,6 +1,8 @@
 """FastAPI server for SDK."""
 
 import argparse
+import asyncio
+from contextlib import asynccontextmanager
 import os
 import colorlog
 import logging
@@ -23,6 +25,8 @@ logger = logging.getLogger(__name__)
 
 # Global logging mode
 _logging_mode: str = "default"
+_storage_watch_task: asyncio.Task | None = None
+_storage_watch_stop: asyncio.Event | None = None
 
 
 def discover_and_load_prompts():
@@ -59,6 +63,89 @@ def discover_and_load_prompts():
             sys.modules[module_name] = module
             spec.loader.exec_module(module)
             loaded_count += 1
+
+
+def _snapshot_storage(directory: Path) -> dict[str, tuple[int, int]]:
+    """Return a lightweight snapshot of files in storage for change detection."""
+    if not directory.exists():
+        return {}
+
+    snapshot: dict[str, tuple[int, int]] = {}
+    for path in directory.rglob("*"):
+        if path.is_file():
+            stats = path.stat()
+            snapshot[str(path.relative_to(directory))] = (
+                int(stats.st_mtime_ns),
+                int(stats.st_size),
+            )
+    return snapshot
+
+
+def _reload_prompt_storage() -> None:
+    """Reload prompts from disk and refresh any actualized prompts."""
+    from pixie.prompts import storage as storage_module
+
+    storage_instance = storage_module._storage_instance
+    if storage_instance is None:
+        logger.warning("Prompt storage is not initialized; skip reload.")
+        return
+
+    storage_instance.load()
+
+
+async def _watch_storage_directory(
+    storage_directory: Path,
+    poll_interval: float,
+    stop_event: asyncio.Event,
+) -> None:
+    """Watch the prompt storage directory for changes and trigger reloads."""
+    previous_snapshot = _snapshot_storage(storage_directory)
+
+    while not stop_event.is_set():
+        await asyncio.sleep(poll_interval)
+        current_snapshot = _snapshot_storage(storage_directory)
+        if current_snapshot != previous_snapshot:
+            logger.info("Detected prompt storage change; reloading prompts...")
+            try:
+                _reload_prompt_storage()
+            except Exception:
+                logger.exception("Failed to reload prompts after storage change.")
+            previous_snapshot = current_snapshot
+
+
+async def _start_storage_watcher(storage_directory: Path, poll_interval: float) -> None:
+    """Start a background task to watch prompt storage."""
+    global _storage_watch_task, _storage_watch_stop
+
+    if _storage_watch_task is not None:
+        return
+
+    _storage_watch_stop = asyncio.Event()
+    _storage_watch_task = asyncio.create_task(
+        _watch_storage_directory(storage_directory, poll_interval, _storage_watch_stop)
+    )
+    logger.info(
+        "Watching prompt storage at %s (poll interval %.2fs)",
+        storage_directory,
+        poll_interval,
+    )
+
+
+async def _stop_storage_watcher() -> None:
+    """Stop the background prompt storage watcher if running."""
+    global _storage_watch_task, _storage_watch_stop
+
+    if _storage_watch_stop is not None:
+        _storage_watch_stop.set()
+
+    if _storage_watch_task is not None:
+        try:
+            await _storage_watch_task
+        except asyncio.CancelledError:
+            pass
+
+    _storage_watch_task = None
+    _storage_watch_stop = None
 
 
 def setup_logging(mode: str = "default"):
@@ -129,10 +216,22 @@ def create_app() -> FastAPI:
     storage_directory = os.getenv("PIXIE_PROMPT_STORAGE_DIR", ".pixie/prompts")
     initialize_prompt_storage(storage_directory)
 
+    @asynccontextmanager
+    async def lifespan(app: FastAPI):
+        try:
+            nonlocal storage_directory
+            storage_path = Path(storage_directory)
+            watch_interval = float(os.getenv("PIXIE_PROMPT_WATCH_INTERVAL", "1.0"))
+            await _start_storage_watcher(storage_path, watch_interval)
+            yield
+        finally:
+            await _stop_storage_watcher()
+
     app = FastAPI(
-        title="Pixie SDK Server",
-        description="Server for running AI applications and agents",
+        title="Pixie Prompts Dev Server",
+        description="Server for managing prompts",
         version="0.1.0",
+        lifespan=lifespan,
     )
 
     # Add CORS middleware
@@ -155,7 +254,7 @@ def create_app() -> FastAPI:
     @app.get("/")
     async def root():
         return {
-            "message": "Pixie SDK Server",
+            "message": "Pixie Prompts Dev Server",
             "graphiql": "/graphql",
             "version": "0.1.0",
         }

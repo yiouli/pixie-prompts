@@ -43,6 +43,7 @@ class _FilePromptStorage(PromptStorage):
 
     def load(self) -> None:
         """prompts that are in storage"""
+        self._prompts.clear()
         if not os.path.exists(self._directory):
             os.makedirs(self._directory)
         for entry in os.listdir(self._directory):
