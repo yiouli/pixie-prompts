@@ -1,13 +1,10 @@
 """FastAPI server for SDK."""
 
 import argparse
-import asyncio
 from contextlib import asynccontextmanager
 import os
 import colorlog
 import logging
-import sys
-import importlib.util
 from pathlib import Path
 from urllib.parse import quote
 
@@ -17,135 +14,19 @@ from fastapi.middleware.cors import CORSMiddleware
 from strawberry.fastapi import GraphQLRouter
 import uvicorn
 
-from pixie.prompts.storage import initialize_prompt_storage
+from pixie.prompts.file_watcher import (
+    discover_and_load_prompts,
+    start_storage_watcher,
+    stop_storage_watcher,
+)
 from pixie.prompts.graphql import schema
+from pixie.prompts.storage import initialize_prompt_storage
 
 
 logger = logging.getLogger(__name__)
 
 # Global logging mode
 _logging_mode: str = "default"
-_storage_watch_task: asyncio.Task | None = None
-_storage_watch_stop: asyncio.Event | None = None
-
-
-def discover_and_load_prompts():
-    """Discover and load all Python files that use pixie.prompts.create_prompt, or pixie.create_prompt.
-
-    This function recursively searches the current working directory for Python files
-    """
-    cwd = Path.cwd()
-    # Recursively find all Python files
-    python_files = list(cwd.rglob("*.py"))
-
-    if not python_files:
-        return
-
-    # Add current directory to Python path if not already there
-    if str(cwd) not in sys.path:
-        sys.path.insert(0, str(cwd))
-
-    loaded_count = 0
-    for py_file in python_files:
-        # Skip __init__.py, private files, and anything in site-packages/venv
-        if py_file.name.startswith("_") or any(
-            part in py_file.parts
-            for part in ["site-packages", ".venv", "venv", "__pycache__"]
-        ):
-            continue
-
-        # Load the module with a unique name based on path
-        relative_path = py_file.relative_to(cwd)
-        module_name = str(relative_path.with_suffix("")).replace("/", ".")
-        spec = importlib.util.spec_from_file_location(module_name, py_file)
-        if spec and spec.loader:
-            module = importlib.util.module_from_spec(spec)
-            sys.modules[module_name] = module
-            spec.loader.exec_module(module)
-            loaded_count += 1
-
-
-def _snapshot_storage(directory: Path) -> dict[str, tuple[int, int]]:
-    """Return a lightweight snapshot of files in storage for change detection."""
-    if not directory.exists():
-        return {}
-
-    snapshot: dict[str, tuple[int, int]] = {}
-    for path in directory.rglob("*"):
-        if path.is_file():
-            stats = path.stat()
-            snapshot[str(path.relative_to(directory))] = (
-                int(stats.st_mtime_ns),
-                int(stats.st_size),
-            )
-    return snapshot
-
-
-def _reload_prompt_storage() -> None:
-    """Reload prompts from disk and refresh any actualized prompts."""
-    from pixie.prompts import storage as storage_module
-
-    storage_instance = storage_module._storage_instance
-    if storage_instance is None:
-        logger.warning("Prompt storage is not initialized; skip reload.")
-        return
-
-    storage_instance.load()
-
-
-async def _watch_storage_directory(
-    storage_directory: Path,
-    poll_interval: float,
-    stop_event: asyncio.Event,
-) -> None:
-    """Watch the prompt storage directory for changes and trigger reloads."""
-    previous_snapshot = _snapshot_storage(storage_directory)
-
-    while not stop_event.is_set():
-        await asyncio.sleep(poll_interval)
-        current_snapshot = _snapshot_storage(storage_directory)
-        if current_snapshot != previous_snapshot:
-            logger.info("Detected prompt storage change; reloading prompts...")
-            try:
-                _reload_prompt_storage()
-            except Exception:
-                logger.exception("Failed to reload prompts after storage change.")
-            previous_snapshot = current_snapshot
-
-
-async def _start_storage_watcher(storage_directory: Path, poll_interval: float) -> None:
-    """Start a background task to watch prompt storage."""
-    global _storage_watch_task, _storage_watch_stop
-
-    if _storage_watch_task is not None:
-        return
-
-    _storage_watch_stop = asyncio.Event()
-    _storage_watch_task = asyncio.create_task(
-        _watch_storage_directory(storage_directory, poll_interval, _storage_watch_stop)
-    )
-    logger.info(
-        "Watching prompt storage at %s (poll interval %.2fs)",
-        storage_directory,
-        poll_interval,
-    )
-
-
-async def _stop_storage_watcher() -> None:
-    """Stop the background prompt storage watcher if running."""
-    global _storage_watch_task, _storage_watch_stop
-
-    if _storage_watch_stop is not None:
-        _storage_watch_stop.set()
-
-    if _storage_watch_task is not None:
-        try:
-            await _storage_watch_task
-        except asyncio.CancelledError:
-            pass
-
-    _storage_watch_task = None
-    _storage_watch_stop = None
 
 
 def setup_logging(mode: str = "default"):
@@ -222,10 +103,10 @@ def create_app() -> FastAPI:
             nonlocal storage_directory
             storage_path = Path(storage_directory)
             watch_interval = float(os.getenv("PIXIE_PROMPT_WATCH_INTERVAL", "1.0"))
-            await _start_storage_watcher(storage_path, watch_interval)
+            await start_storage_watcher(storage_path, watch_interval)
             yield
         finally:
-            await _stop_storage_watcher()
+            await stop_storage_watcher()
 
     app = FastAPI(
         title="Pixie Prompts Dev Server",
@@ -233,11 +114,15 @@ def create_app() -> FastAPI:
         version="0.1.0",
         lifespan=lifespan,
     )
-
+    # Matches:
+    # 1. http://localhost followed by an optional port (:8080, :3000, etc.)
+    # 2. http://127.0.0.1 followed by an optional port
+    # 3. https://yourdomain.com (the production domain)
+    origins_regex = r"http://(localhost|127\.0\.0\.1)(:\d+)?|https://gopixie\.ai"
     # Add CORS middleware
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"],  # Allows all origins
+        allow_origin_regex=origins_regex,
         allow_credentials=True,
         allow_methods=["*"],  # Allows all methods
         allow_headers=["*"],  # Allows all headers
