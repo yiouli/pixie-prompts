@@ -3,7 +3,7 @@ import logging
 import os
 from dataclasses import dataclass
 from types import NoneType
-from typing import Any, Dict, Protocol, Self, TypedDict
+from typing import Any, Dict, NotRequired, Protocol, Self, TypedDict
 
 from jsonsubschema import isSubschema
 
@@ -51,7 +51,7 @@ class PromptStorage(Protocol):
 
 class _BasePromptMetadata(TypedDict):
     defaultVersionId: str
-    variablesSchema: Dict[str, Any]
+    variablesSchema: NotRequired[Dict[str, Any]]
 
 
 class _FilePromptStorage(PromptStorage):
@@ -79,10 +79,13 @@ class _FilePromptStorage(PromptStorage):
                 continue
             try:
                 metadata_path = os.path.join(prompt_path, "metadata.json")
-                with open(metadata_path, "r") as f:
-                    metadata: _BasePromptMetadata = json.load(f)
+                metadata: _BasePromptMetadata | None = None
+                if os.path.isfile(metadata_path):
+                    with open(metadata_path, "r") as f:
+                        metadata = json.load(f)
 
                 versions: dict[str, str] = {}
+                version_creation_times: dict[str, float] = {}
                 for filename in os.listdir(prompt_path):
                     if not filename.endswith(".mustache"):
                         continue
@@ -90,15 +93,32 @@ class _FilePromptStorage(PromptStorage):
                     version_path = os.path.join(prompt_path, filename)
                     with open(version_path, "r") as vf:
                         versions[version_id] = vf.read()
+                    version_creation_times[version_id] = os.path.getctime(version_path)
 
                 if not versions:
                     raise KeyError("No versions provided for the prompt.")
 
+                if metadata is not None:
+                    default_version_id = metadata["defaultVersionId"]
+                    variables_schema = metadata.get("variablesSchema", None)
+                else:
+                    default_version_id, _ = max(
+                        version_creation_times.items(),
+                        key=lambda item: (item[1], item[0]),
+                    )
+                    variables_schema = None
+
+                if default_version_id not in versions:
+                    raise KeyError(
+                        f"Default version '{default_version_id}' not found for prompt '{entry}'."
+                    )
+
                 prompt = BaseUntypedPrompt(
                     id=entry,
                     versions=versions,
-                    default_version_id=metadata["defaultVersionId"],
-                    variables_schema=metadata["variablesSchema"],
+                    default_version_id=default_version_id,
+                    variables_schema=variables_schema,
+                    created_at=version_creation_times.get(default_version_id),
                 )
                 self._prompts[entry] = prompt
                 logger.debug(
@@ -162,6 +182,17 @@ class _FilePromptStorage(PromptStorage):
         for stale_version in existing_versions - set(versions.keys()):
             stale_path = os.path.join(prompt_dir, f"{stale_version}.mustache")
             os.remove(stale_path)
+
+        default_version_id = prompt.get_default_version_id()
+        default_version_path = os.path.join(
+            prompt_dir, f"{default_version_id}.mustache"
+        )
+        if not os.path.exists(default_version_path):
+            raise FileNotFoundError(
+                f"Default version '{default_version_id}' file is missing for prompt '{prompt_id}'."
+            )
+        prompt._created_at = os.path.getctime(default_version_path)
+
         try:
             BasePrompt.update_prompt_registry(prompt)
         except KeyError:
@@ -209,6 +240,11 @@ class StorageBackedPrompt(Prompt[TPromptVar]):
     @property
     def variables_definition(self) -> type[TPromptVar]:
         return self._variables_definition
+
+    @property
+    def createdAt(self) -> float | None:
+        prompt = self._get_prompt()
+        return prompt.get_created_at()
 
     def get_variables_schema(self) -> dict[str, Any]:
         return variables_definition_to_schema(self._variables_definition)

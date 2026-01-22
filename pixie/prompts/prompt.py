@@ -132,6 +132,7 @@ class BaseUntypedPrompt(_UnTypedPrompt):
         default_version_id: str | None = None,
         id: str | None = None,
         variables_schema: dict[str, Any] | None = None,
+        created_at: float | None = None,
     ) -> None:
         if not id:
             id = uuid4().hex
@@ -145,6 +146,7 @@ class BaseUntypedPrompt(_UnTypedPrompt):
         self._versions = _to_versions_dict(versions)
         self._default_version = default_version_id or next(iter(self._versions))
         self._variables_schema = variables_schema or EMPTY_VARIABLES_SCHEMA
+        self._created_at = created_at
 
     @property
     def id(self) -> str:
@@ -158,6 +160,9 @@ class BaseUntypedPrompt(_UnTypedPrompt):
 
     def get_variables_schema(self) -> dict[str, Any]:
         return deepcopy(self._variables_schema)
+
+    def get_created_at(self) -> float | None:
+        return self._created_at
 
 
 class Prompt(_UnTypedPrompt, Generic[TPromptVar]):
@@ -207,6 +212,7 @@ class BasePrompt(BaseUntypedPrompt, Generic[TPromptVar]):
             versions=untyped_prompt.get_versions(),
             default_version_id=untyped_prompt.get_default_version_id(),
             id=untyped_prompt.id,
+            created_at=untyped_prompt.get_created_at(),
         )
 
     def __init__(
@@ -216,12 +222,14 @@ class BasePrompt(BaseUntypedPrompt, Generic[TPromptVar]):
         default_version_id: str | None = None,
         variables_definition: type[TPromptVar] = NoneType,
         id: str | None = None,
+        created_at: float | None = None,
     ) -> None:
         super().__init__(
             versions=versions,
             default_version_id=default_version_id,
             id=id,
             variables_schema=variables_definition_to_schema(variables_definition),
+            created_at=created_at,
         )
         self._variables_definition = variables_definition
         _prompt_registry[self.id] = self
@@ -270,12 +278,15 @@ class BasePrompt(BaseUntypedPrompt, Generic[TPromptVar]):
         *,
         versions: str | dict[str, str] | None = None,
         default_version_id: str | None = None,
+        created_at: float | None = None,
     ) -> "tuple[Self, OutdatedPrompt[TPromptVar]]":
         outdated_prompt = OutdatedPrompt.from_prompt(self)
         if versions is not None:
             self._versions = _to_versions_dict(versions)
         if default_version_id is not None:
             self._default_version = default_version_id
+        if created_at is not None:
+            self._created_at = created_at
         _mark_compiled_prompts_outdated(self.id, outdated_prompt)
         return self, outdated_prompt
 
@@ -294,6 +305,7 @@ class BasePrompt(BaseUntypedPrompt, Generic[TPromptVar]):
         existing._update(
             versions=untyped_prompt.get_versions(),
             default_version_id=untyped_prompt.get_default_version_id(),
+            created_at=untyped_prompt.get_created_at(),
         )
         return existing
 
@@ -333,11 +345,13 @@ class OutdatedPrompt(BasePrompt[TPromptVar]):
         default_version_id: str,
         variables_definition: type[TPromptVar],
         id: str,
+        created_at: float | None = None,
     ) -> None:
         self._id = id
         self._versions = _to_versions_dict(versions)
         self._default_version = default_version_id
         self._variables_definition = variables_definition
+        self._created_at = created_at
 
     @classmethod
     def from_prompt(
@@ -348,6 +362,7 @@ class OutdatedPrompt(BasePrompt[TPromptVar]):
             versions=prompt.get_versions(),
             default_version_id=prompt.get_default_version_id(),
             id=prompt.id,
+            created_at=prompt.get_created_at(),
         )
 
     def _update(

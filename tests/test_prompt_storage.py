@@ -4,6 +4,7 @@ import json
 import logging
 import os
 import tempfile
+import time
 import pytest
 from types import NoneType
 from typing import Dict
@@ -171,6 +172,40 @@ class TestFilePromptStorage:
         metadata_path = os.path.join(prompt_dir, "metadata.json")
         with open(metadata_path, "w") as f:
             json.dump({"defaultVersionId": "default", "variablesSchema": {}}, f)
+
+        with pytest.raises(PromptLoadError) as excinfo:
+            _FilePromptStorage(temp_dir)
+
+        failures = excinfo.value.failures
+        assert len(failures) == 1
+        assert isinstance(failures[0].error, KeyError)
+
+    def test_load_without_metadata_uses_latest_version(self, temp_dir: str):
+        """When metadata is missing, the latest created version becomes default and created_at is recorded."""
+        prompt_dir = os.path.join(temp_dir, "no_metadata")
+        os.makedirs(prompt_dir, exist_ok=True)
+
+        v1_path = os.path.join(prompt_dir, "v1.mustache")
+        with open(v1_path, "w") as f:
+            f.write("first")
+
+        time.sleep(0.02)
+
+        v2_path = os.path.join(prompt_dir, "v2.mustache")
+        with open(v2_path, "w") as f:
+            f.write("second")
+
+        storage = _FilePromptStorage(temp_dir)
+
+        prompt = storage.get("no_metadata")
+        assert prompt.get_versions() == {"v1": "first", "v2": "second"}
+        assert prompt.get_default_version_id() == "v2"
+        assert prompt.get_created_at() == pytest.approx(os.path.getctime(v2_path))
+
+    def test_load_without_metadata_and_no_versions_fails(self, temp_dir: str):
+        """Loading a prompt without metadata still fails when no version files exist."""
+        prompt_dir = os.path.join(temp_dir, "empty")
+        os.makedirs(prompt_dir, exist_ok=True)
 
         with pytest.raises(PromptLoadError) as excinfo:
             _FilePromptStorage(temp_dir)
@@ -860,6 +895,57 @@ class TestFilePromptStorage:
         prompt = StorageBackedPrompt(id="default_test")
         default_id = prompt.get_default_version_id()
         assert default_id == "v2"
+
+    @pytest.mark.asyncio
+    async def test_storage_backed_prompt_created_at_matches_default_version(
+        self, temp_dir: str
+    ):
+        """createdAt returns the creation time of the default version file."""
+        from pixie.prompts.storage import initialize_prompt_storage, StorageBackedPrompt
+
+        write_prompt_folder(
+            temp_dir,
+            "created_at_test",
+            versions={"v1": "Version 1"},
+            default_version_id="v1",
+            variables_schema={"type": "object", "properties": {}},
+        )
+
+        initialize_prompt_storage(temp_dir)
+
+        default_path = os.path.join(temp_dir, "created_at_test", "v1.mustache")
+        prompt = StorageBackedPrompt(id="created_at_test")
+
+        created_at = prompt.createdAt
+        assert created_at == pytest.approx(os.path.getctime(default_path))
+
+    @pytest.mark.asyncio
+    async def test_storage_backed_prompt_without_metadata_uses_latest_version(
+        self, temp_dir: str
+    ):
+        """StorageBackedPrompt falls back to latest version when metadata is absent."""
+        from pixie.prompts.storage import initialize_prompt_storage, StorageBackedPrompt
+
+        prompt_dir = os.path.join(temp_dir, "no_metadata_storage")
+        os.makedirs(prompt_dir, exist_ok=True)
+
+        v1_path = os.path.join(prompt_dir, "v1.mustache")
+        with open(v1_path, "w") as f:
+            f.write("one")
+
+        time.sleep(0.02)
+
+        v2_path = os.path.join(prompt_dir, "v2.mustache")
+        with open(v2_path, "w") as f:
+            f.write("two")
+
+        initialize_prompt_storage(temp_dir)
+
+        prompt = StorageBackedPrompt(id="no_metadata_storage")
+
+        assert prompt.get_default_version_id() == "v2"
+        assert prompt.get_versions() == {"v1": "one", "v2": "two"}
+        assert prompt.createdAt == pytest.approx(os.path.getctime(v2_path))
 
     @pytest.mark.asyncio
     async def test_storage_backed_prompt_append_version(self, temp_dir: str):
