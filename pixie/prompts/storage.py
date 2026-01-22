@@ -24,13 +24,12 @@ class PromptStorage(Protocol):
 
     def exists(self, prompt_id: str) -> bool: ...
 
-    def save(self, prompt: BaseUntypedPrompt) -> None: ...
+    def save(self, prompt: BaseUntypedPrompt) -> bool: ...
 
     def get(self, prompt_id: str) -> BaseUntypedPrompt: ...
 
 
-class _BasePromptJson(TypedDict):
-    versions: Dict[str, str]
+class _BasePromptMetadata(TypedDict):
     defaultVersionId: str
     variablesSchema: Dict[str, Any]
 
@@ -46,22 +45,34 @@ class _FilePromptStorage(PromptStorage):
         """prompts that are in storage"""
         if not os.path.exists(self._directory):
             os.makedirs(self._directory)
-        for filename in os.listdir(self._directory):
-            if filename.endswith(".json"):
-                prompt_id = filename[:-5]  # remove .json
-                filepath = os.path.join(self._directory, filename)
-                with open(filepath, "r") as f:
-                    data: _BasePromptJson = json.load(f)
-                versions = data["versions"]
-                default_version_id = data["defaultVersionId"]
-                variables_schema = data["variablesSchema"]
-                prompt = BaseUntypedPrompt(
-                    id=prompt_id,
-                    versions=versions,
-                    default_version_id=default_version_id,
-                    variables_schema=variables_schema,
-                )
-                self._prompts[prompt_id] = prompt
+        for entry in os.listdir(self._directory):
+            prompt_path = os.path.join(self._directory, entry)
+            if not os.path.isdir(prompt_path):
+                continue
+
+            metadata_path = os.path.join(prompt_path, "metadata.json")
+            with open(metadata_path, "r") as f:
+                metadata: _BasePromptMetadata = json.load(f)
+
+            versions: dict[str, str] = {}
+            for filename in os.listdir(prompt_path):
+                if not filename.endswith(".mustache"):
+                    continue
+                version_id, _ = os.path.splitext(filename)
+                version_path = os.path.join(prompt_path, filename)
+                with open(version_path, "r") as vf:
+                    versions[version_id] = vf.read()
+
+            if not versions:
+                raise KeyError("No versions provided for the prompt.")
+
+            prompt = BaseUntypedPrompt(
+                id=entry,
+                versions=versions,
+                default_version_id=metadata["defaultVersionId"],
+                variables_schema=metadata["variablesSchema"],
+            )
+            self._prompts[entry] = prompt
 
     def exists(self, prompt_id: str) -> bool:
         return prompt_id in self._prompts
@@ -76,14 +87,32 @@ class _FilePromptStorage(PromptStorage):
                 raise TypeError(
                     "Original schema must be a subschema of the new schema."
                 )
-        data: _BasePromptJson = {
-            "versions": prompt.get_versions(),
+        prompt_dir = os.path.join(self._directory, prompt_id)
+        os.makedirs(prompt_dir, exist_ok=True)
+
+        metadata: _BasePromptMetadata = {
             "defaultVersionId": prompt.get_default_version_id(),
             "variablesSchema": prompt.get_variables_schema(),
         }
-        filepath = os.path.join(self._directory, f"{prompt_id}.json")
-        with open(filepath, "w") as f:
-            json.dump(data, f, indent=2)
+        metadata_path = os.path.join(prompt_dir, "metadata.json")
+        with open(metadata_path, "w") as f:
+            json.dump(metadata, f, indent=2)
+
+        existing_versions = {
+            os.path.splitext(filename)[0]
+            for filename in os.listdir(prompt_dir)
+            if filename.endswith(".mustache")
+        }
+
+        versions = prompt.get_versions()
+        for version_id, content in versions.items():
+            version_path = os.path.join(prompt_dir, f"{version_id}.mustache")
+            with open(version_path, "w") as vf:
+                vf.write(content)
+
+        for stale_version in existing_versions - set(versions.keys()):
+            stale_path = os.path.join(prompt_dir, f"{stale_version}.mustache")
+            os.remove(stale_path)
         try:
             BasePrompt.update_prompt_registry(prompt)
         except KeyError:

@@ -1,7 +1,6 @@
 """Comprehensive unit tests for pixie.prompts.prompt module."""
 
 import os
-import json
 import pytest
 import tempfile
 from types import NoneType
@@ -926,11 +925,9 @@ class TestFilePromptStorage:
             assert not is_new
 
             # Verify the file content
-            filepath = os.path.join(temp_dir, f"{prompt.id}.json")
-            with open(filepath, "r") as f:
-                data = json.load(f)
-
-            assert data["versions"]["v1"] == "Updated version"
+            prompt_dir = os.path.join(temp_dir, prompt.id)
+            with open(os.path.join(prompt_dir, "v1.mustache"), "r") as f:
+                assert f.read() == "Updated version"
 
 
 class TestVariablesDefinitionToSchema:

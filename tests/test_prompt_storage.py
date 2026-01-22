@@ -11,6 +11,30 @@ from pixie.prompts.prompt import BaseUntypedPrompt, BasePrompt, _prompt_registry
 from pixie.prompts.storage import _FilePromptStorage
 
 
+def write_prompt_folder(
+    base_dir: str,
+    prompt_id: str,
+    *,
+    versions: Dict[str, str],
+    default_version_id: str,
+    variables_schema: Dict | None = None,
+):
+    prompt_dir = os.path.join(base_dir, prompt_id)
+    os.makedirs(prompt_dir, exist_ok=True)
+    with open(os.path.join(prompt_dir, "metadata.json"), "w") as f:
+        json.dump(
+            {
+                "defaultVersionId": default_version_id,
+                "variablesSchema": variables_schema
+                or {"type": "object", "properties": {}},
+            },
+            f,
+        )
+    for version_id, content in versions.items():
+        with open(os.path.join(prompt_dir, f"{version_id}.mustache"), "w") as f:
+            f.write(content)
+
+
 class TestFilePromptStorage:
     """Tests for FilePromptStorage class."""
 
@@ -51,11 +75,15 @@ class TestFilePromptStorage:
         }
 
     def create_sample_files(self, temp_dir: str, sample_data: Dict[str, Dict]):
-        """Create sample JSON files in the temp directory."""
+        """Create sample prompt folders in the temp directory."""
         for prompt_id, data in sample_data.items():
-            filepath = os.path.join(temp_dir, f"{prompt_id}.json")
-            with open(filepath, "w") as f:
-                json.dump(data, f)
+            write_prompt_folder(
+                temp_dir,
+                prompt_id,
+                versions=data["versions"],
+                default_version_id=data["defaultVersionId"],
+                variables_schema=data["variablesSchema"],
+            )
 
     def test_init_creates_directory_if_not_exists(self, temp_dir: str):
         """Test that __init__ creates the directory if it doesn't exist."""
@@ -103,18 +131,14 @@ class TestFilePromptStorage:
         assert len(storage._prompts) == 0
 
     def test_init_skips_non_json_files(self, temp_dir: str):
-        """Test that __init__ skips files that don't end with .json."""
-        # Create a JSON file and a non-JSON file
-        json_path = os.path.join(temp_dir, "prompt1.json")
-        with open(json_path, "w") as f:
-            json.dump(
-                {
-                    "versions": {"default": "test"},
-                    "defaultVersionId": "default",
-                    "variablesSchema": {"type": "object", "properties": {}},
-                },
-                f,
-            )
+        """Test that __init__ skips non-prompt entries in storage directory."""
+        write_prompt_folder(
+            temp_dir,
+            "prompt1",
+            versions={"default": "test"},
+            default_version_id="default",
+            variables_schema={"type": "object", "properties": {}},
+        )
 
         txt_path = os.path.join(temp_dir, "readme.txt")
         with open(txt_path, "w") as f:
@@ -126,8 +150,10 @@ class TestFilePromptStorage:
 
     def test_init_handles_invalid_json(self, temp_dir: str):
         """Test that __init__ raises an exception for invalid JSON."""
-        invalid_path = os.path.join(temp_dir, "invalid.json")
-        with open(invalid_path, "w") as f:
+        prompt_dir = os.path.join(temp_dir, "invalid")
+        os.makedirs(prompt_dir, exist_ok=True)
+        metadata_path = os.path.join(prompt_dir, "metadata.json")
+        with open(metadata_path, "w") as f:
             f.write("invalid json content")
 
         with pytest.raises(json.JSONDecodeError):
@@ -135,9 +161,11 @@ class TestFilePromptStorage:
 
     def test_init_handles_missing_versions(self, temp_dir: str):
         """Test that __init__ raises ValueError for missing versions in JSON."""
-        missing_versions_path = os.path.join(temp_dir, "missing.json")
-        with open(missing_versions_path, "w") as f:
-            json.dump({"defaultVersionId": "default"}, f)
+        prompt_dir = os.path.join(temp_dir, "missing")
+        os.makedirs(prompt_dir, exist_ok=True)
+        metadata_path = os.path.join(prompt_dir, "metadata.json")
+        with open(metadata_path, "w") as f:
+            json.dump({"defaultVersionId": "default", "variablesSchema": {}}, f)
 
         with pytest.raises(KeyError):
             _FilePromptStorage(temp_dir)
@@ -175,16 +203,19 @@ class TestFilePromptStorage:
         result = storage.save(prompt)
         assert result is True
 
-        # Verify file was created
-        filepath = os.path.join(temp_dir, "new_prompt.json")
-        assert os.path.exists(filepath)
+        prompt_dir = os.path.join(temp_dir, "new_prompt")
+        assert os.path.isdir(prompt_dir)
 
-        # Verify content
-        with open(filepath, "r") as f:
+        with open(os.path.join(prompt_dir, "metadata.json"), "r") as f:
             data = json.load(f)
-        assert data["versions"] == {"v1": "Hello {name}", "v2": "Hi {name}"}
+
         assert data["defaultVersionId"] == "v1"
         assert "variablesSchema" in data
+
+        with open(os.path.join(prompt_dir, "v1.mustache"), "r") as f:
+            assert f.read() == "Hello {name}"
+        with open(os.path.join(prompt_dir, "v2.mustache"), "r") as f:
+            assert f.read() == "Hi {name}"
 
     @pytest.mark.asyncio
     async def test_save_updates_existing_prompt(
@@ -214,12 +245,15 @@ class TestFilePromptStorage:
         assert storage._prompts["prompt1"] is updated_prompt
         assert storage._prompts["prompt1"].get_versions() == updated_versions
 
-        # Check file was updated
-        filepath = os.path.join(temp_dir, "prompt1.json")
-        with open(filepath, "r") as f:
-            data = json.load(f)
-        assert data["versions"] == updated_versions
-        assert data["defaultVersionId"] == "v1"
+        prompt_dir = os.path.join(temp_dir, "prompt1")
+        with open(os.path.join(prompt_dir, "metadata.json"), "r") as f:
+            metadata = json.load(f)
+        assert metadata["defaultVersionId"] == "v1"
+
+        with open(os.path.join(prompt_dir, "v1.mustache"), "r") as f:
+            assert f.read() == "Updated {name}"
+        with open(os.path.join(prompt_dir, "v3.mustache"), "r") as f:
+            assert f.read() == "New version"
 
     @pytest.mark.asyncio
     async def test_get_returns_existing_prompt(
@@ -259,22 +293,19 @@ class TestFilePromptStorage:
         assert result is True
 
         # Verify it was saved to file
-        filepath = os.path.join(temp_dir, "test_prompt.json")
-        assert os.path.exists(filepath)
+        prompt_dir = os.path.join(temp_dir, "test_prompt")
+        assert os.path.isdir(prompt_dir)
 
     @pytest.mark.asyncio
     async def test_init_with_default_version_id_none(self, temp_dir: str):
         """Test loading a prompt where defaultVersionId is missing (defaults to first version)."""
-        filepath = os.path.join(temp_dir, "prompt.json")
-        with open(filepath, "w") as f:
-            json.dump(
-                {
-                    "versions": {"v1": "Version 1"},
-                    "defaultVersionId": "v1",
-                    "variablesSchema": {"type": "object", "properties": {}},
-                },
-                f,
-            )
+        write_prompt_folder(
+            temp_dir,
+            "prompt",
+            versions={"v1": "Version 1"},
+            default_version_id="v1",
+            variables_schema={"type": "object", "properties": {}},
+        )
 
         storage = _FilePromptStorage(temp_dir)
         prompt = storage._prompts["prompt"]
@@ -358,20 +389,13 @@ class TestFilePromptStorage:
             StorageBackedPrompt,
         )
 
-        # Create prompt file directly
-        import json
-        import os
-
-        prompt_file = os.path.join(temp_dir, "test_prompt.json")
-        with open(prompt_file, "w") as f:
-            json.dump(
-                {
-                    "versions": {"v1": "Hello {name}"},
-                    "defaultVersionId": "v1",
-                    "variablesSchema": {"type": "object", "properties": {}},
-                },
-                f,
-            )
+        write_prompt_folder(
+            temp_dir,
+            "test_prompt",
+            versions={"v1": "Hello {name}"},
+            default_version_id="v1",
+            variables_schema={"type": "object", "properties": {}},
+        )
 
         # Initialize storage - it will load existing files
         initialize_prompt_storage(temp_dir)
@@ -397,20 +421,13 @@ class TestFilePromptStorage:
         class TestVars(PromptVariables):
             name: str
 
-        # Create prompt file directly
-        import json
-        import os
-
-        prompt_file = os.path.join(temp_dir, "test_prompt.json")
-        with open(prompt_file, "w") as f:
-            json.dump(
-                {
-                    "versions": {"v1": "Hello {{name}}!"},
-                    "defaultVersionId": "v1",
-                    "variablesSchema": {"type": "object", "properties": {}},
-                },
-                f,
-            )
+        write_prompt_folder(
+            temp_dir,
+            "test_prompt",
+            versions={"v1": "Hello {{name}}!"},
+            default_version_id="v1",
+            variables_schema={"type": "object", "properties": {}},
+        )
 
         # Initialize storage
         initialize_prompt_storage(temp_dir)
@@ -447,20 +464,13 @@ class TestFilePromptStorage:
         from pixie.prompts.storage import initialize_prompt_storage
         from pixie.prompts.prompt_management import create_prompt
 
-        # Create prompt file directly
-        import json
-        import os
-
-        prompt_file = os.path.join(temp_dir, "helper_test.json")
-        with open(prompt_file, "w") as f:
-            json.dump(
-                {
-                    "versions": {"v1": "Test"},
-                    "defaultVersionId": "v1",
-                    "variablesSchema": {"type": "object", "properties": {}},
-                },
-                f,
-            )
+        write_prompt_folder(
+            temp_dir,
+            "helper_test",
+            versions={"v1": "Test"},
+            default_version_id="v1",
+            variables_schema={"type": "object", "properties": {}},
+        )
 
         # Initialize storage
         initialize_prompt_storage(temp_dir)
@@ -486,23 +496,16 @@ class TestFilePromptStorage:
         class TestVars(PromptVariables):
             name: str
 
-        # Create prompt file with empty schema (accepts everything)
-        import json
-        import os
-
-        prompt_file = os.path.join(temp_dir, "schema_test.json")
-        with open(prompt_file, "w") as f:
-            json.dump(
-                {
-                    "versions": {"v1": "Hello {name}!"},
-                    "defaultVersionId": "v1",
-                    "variablesSchema": {
-                        "type": "object",
-                        "properties": {},
-                    },  # Empty schema
-                },
-                f,
-            )
+        write_prompt_folder(
+            temp_dir,
+            "schema_test",
+            versions={"v1": "Hello {name}!"},
+            default_version_id="v1",
+            variables_schema={
+                "type": "object",
+                "properties": {},
+            },
+        )
 
         # Initialize storage
         initialize_prompt_storage(temp_dir)
@@ -526,24 +529,17 @@ class TestFilePromptStorage:
             StorageBackedPrompt,
         )
 
-        # Create prompt file with restrictive schema (requires name)
-        import json
-        import os
-
-        prompt_file = os.path.join(temp_dir, "schema_fail_test.json")
-        with open(prompt_file, "w") as f:
-            json.dump(
-                {
-                    "versions": {"v1": "Hello {name}!"},
-                    "defaultVersionId": "v1",
-                    "variablesSchema": {
-                        "type": "object",
-                        "properties": {"name": {"type": "string"}},
-                        "required": ["name"],
-                    },
-                },
-                f,
-            )
+        write_prompt_folder(
+            temp_dir,
+            "schema_fail_test",
+            versions={"v1": "Hello {name}!"},
+            default_version_id="v1",
+            variables_schema={
+                "type": "object",
+                "properties": {"name": {"type": "string"}},
+                "required": ["name"],
+            },
+        )
 
         # Initialize storage
         initialize_prompt_storage(temp_dir)
@@ -568,20 +564,13 @@ class TestFilePromptStorage:
             StorageBackedPrompt,
         )
 
-        # Create prompt file directly
-        import json
-        import os
-
-        prompt_file = os.path.join(temp_dir, "actualize_test.json")
-        with open(prompt_file, "w") as f:
-            json.dump(
-                {
-                    "versions": {"v1": "Hello {name}"},
-                    "defaultVersionId": "v1",
-                    "variablesSchema": {"type": "object", "properties": {}},
-                },
-                f,
-            )
+        write_prompt_folder(
+            temp_dir,
+            "actualize_test",
+            versions={"v1": "Hello {name}"},
+            default_version_id="v1",
+            variables_schema={"type": "object", "properties": {}},
+        )
 
         # Initialize storage
         initialize_prompt_storage(temp_dir)
@@ -638,20 +627,13 @@ class TestFilePromptStorage:
         pm_module._registry.clear()
         initialize_prompt_storage(temp_dir)
 
-        # Create prompt file
-        import json
-        import os
-
-        prompt_file = os.path.join(temp_dir, "create_test.json")
-        with open(prompt_file, "w") as f:
-            json.dump(
-                {
-                    "versions": {"v1": "Hello {name}"},
-                    "defaultVersionId": "v1",
-                    "variablesSchema": {"type": "object", "properties": {}},
-                },
-                f,
-            )
+        write_prompt_folder(
+            temp_dir,
+            "create_test",
+            versions={"v1": "Hello {name}"},
+            default_version_id="v1",
+            variables_schema={"type": "object", "properties": {}},
+        )
 
         # Create new prompt
         prompt = create_prompt(id="create_test")
@@ -684,20 +666,13 @@ class TestFilePromptStorage:
         pm_module._registry.clear()
         initialize_prompt_storage(temp_dir)
 
-        # Create prompt file
-        import json
-        import os
-
-        prompt_file = os.path.join(temp_dir, "existing_test.json")
-        with open(prompt_file, "w") as f:
-            json.dump(
-                {
-                    "versions": {"v1": "Hello {name}"},
-                    "defaultVersionId": "v1",
-                    "variablesSchema": {"type": "object", "properties": {}},
-                },
-                f,
-            )
+        write_prompt_folder(
+            temp_dir,
+            "existing_test",
+            versions={"v1": "Hello {name}"},
+            default_version_id="v1",
+            variables_schema={"type": "object", "properties": {}},
+        )
 
         # Create prompt first time
         prompt1 = create_prompt(id="existing_test", variables_definition=TestVars)
@@ -727,20 +702,13 @@ class TestFilePromptStorage:
         pm_module._registry.clear()
         initialize_prompt_storage(temp_dir)
 
-        # Create prompt file
-        import json
-        import os
-
-        prompt_file = os.path.join(temp_dir, "conflict_test.json")
-        with open(prompt_file, "w") as f:
-            json.dump(
-                {
-                    "versions": {"v1": "Hello {name}"},
-                    "defaultVersionId": "v1",
-                    "variablesSchema": {"type": "object", "properties": {}},
-                },
-                f,
-            )
+        write_prompt_folder(
+            temp_dir,
+            "conflict_test",
+            versions={"v1": "Hello {name}"},
+            default_version_id="v1",
+            variables_schema={"type": "object", "properties": {}},
+        )
 
         # Create prompt first time
         create_prompt(id="conflict_test", variables_definition=TestVars1)
@@ -796,20 +764,13 @@ class TestFilePromptStorage:
         """Test exists_in_storage returns True when prompt exists."""
         from pixie.prompts.storage import initialize_prompt_storage, StorageBackedPrompt
 
-        # Create prompt file
-        import json
-        import os
-
-        prompt_file = os.path.join(temp_dir, "exists_test.json")
-        with open(prompt_file, "w") as f:
-            json.dump(
-                {
-                    "versions": {"v1": "Hello"},
-                    "defaultVersionId": "v1",
-                    "variablesSchema": {"type": "object", "properties": {}},
-                },
-                f,
-            )
+        write_prompt_folder(
+            temp_dir,
+            "exists_test",
+            versions={"v1": "Hello"},
+            default_version_id="v1",
+            variables_schema={"type": "object", "properties": {}},
+        )
 
         initialize_prompt_storage(temp_dir)
 
@@ -831,20 +792,13 @@ class TestFilePromptStorage:
         """Test StorageBackedPrompt.get_default_version_id."""
         from pixie.prompts.storage import initialize_prompt_storage, StorageBackedPrompt
 
-        # Create prompt file
-        import json
-        import os
-
-        prompt_file = os.path.join(temp_dir, "default_test.json")
-        with open(prompt_file, "w") as f:
-            json.dump(
-                {
-                    "versions": {"v1": "Version 1", "v2": "Version 2"},
-                    "defaultVersionId": "v2",
-                    "variablesSchema": {"type": "object", "properties": {}},
-                },
-                f,
-            )
+        write_prompt_folder(
+            temp_dir,
+            "default_test",
+            versions={"v1": "Version 1", "v2": "Version 2"},
+            default_version_id="v2",
+            variables_schema={"type": "object", "properties": {}},
+        )
 
         initialize_prompt_storage(temp_dir)
 
@@ -857,20 +811,13 @@ class TestFilePromptStorage:
         """Test that StorageBackedPrompt.append_version works correctly."""
         from pixie.prompts.storage import initialize_prompt_storage, StorageBackedPrompt
 
-        # Create prompt file
-        import json
-        import os
-
-        prompt_file = os.path.join(temp_dir, "append_test.json")
-        with open(prompt_file, "w") as f:
-            json.dump(
-                {
-                    "versions": {"v1": "Hello {name}"},
-                    "defaultVersionId": "v1",
-                    "variablesSchema": {"type": "object", "properties": {}},
-                },
-                f,
-            )
+        write_prompt_folder(
+            temp_dir,
+            "append_test",
+            versions={"v1": "Hello {name}"},
+            default_version_id="v1",
+            variables_schema={"type": "object", "properties": {}},
+        )
 
         initialize_prompt_storage(temp_dir)
 
@@ -938,24 +885,17 @@ class TestFilePromptStorage:
         """Test that StorageBackedPrompt.update_default_version_id works correctly."""
         from pixie.prompts.storage import initialize_prompt_storage, StorageBackedPrompt
 
-        # Create prompt file with multiple versions
-        import json
-        import os
-
-        prompt_file = os.path.join(temp_dir, "update_default_test.json")
-        with open(prompt_file, "w") as f:
-            json.dump(
-                {
-                    "versions": {
-                        "v1": "Version 1",
-                        "v2": "Version 2",
-                        "v3": "Version 3",
-                    },
-                    "defaultVersionId": "v1",
-                    "variablesSchema": {"type": "object", "properties": {}},
-                },
-                f,
-            )
+        write_prompt_folder(
+            temp_dir,
+            "update_default_test",
+            versions={
+                "v1": "Version 1",
+                "v2": "Version 2",
+                "v3": "Version 3",
+            },
+            default_version_id="v1",
+            variables_schema={"type": "object", "properties": {}},
+        )
 
         initialize_prompt_storage(temp_dir)
 
@@ -997,20 +937,13 @@ class TestFilePromptStorage:
         """Test that actualize loads the prompt and returns self."""
         from pixie.prompts.storage import initialize_prompt_storage, StorageBackedPrompt
 
-        # Create prompt file directly
-        import json
-        import os
-
-        prompt_file = os.path.join(temp_dir, "actualize_test.json")
-        with open(prompt_file, "w") as f:
-            json.dump(
-                {
-                    "versions": {"v1": "Hello {name}"},
-                    "defaultVersionId": "v1",
-                    "variablesSchema": {"type": "object", "properties": {}},
-                },
-                f,
-            )
+        write_prompt_folder(
+            temp_dir,
+            "actualize_test",
+            versions={"v1": "Hello {name}"},
+            default_version_id="v1",
+            variables_schema={"type": "object", "properties": {}},
+        )
 
         initialize_prompt_storage(temp_dir)
 
@@ -1037,24 +970,17 @@ class TestFilePromptStorage:
         class TestVars(PromptVariables):
             name: str
 
-        # Create prompt file with compatible schema
-        import json
-        import os
-
-        prompt_file = os.path.join(temp_dir, "actualize_vars_test.json")
-        with open(prompt_file, "w") as f:
-            json.dump(
-                {
-                    "versions": {"v1": "Hello {name}"},
-                    "defaultVersionId": "v1",
-                    "variablesSchema": {
-                        "type": "object",
-                        "properties": {"name": {"type": "string"}},
-                        "required": ["name"],
-                    },
-                },
-                f,
-            )
+        write_prompt_folder(
+            temp_dir,
+            "actualize_vars_test",
+            versions={"v1": "Hello {name}"},
+            default_version_id="v1",
+            variables_schema={
+                "type": "object",
+                "properties": {"name": {"type": "string"}},
+                "required": ["name"],
+            },
+        )
 
         initialize_prompt_storage(temp_dir)
 
@@ -1078,24 +1004,17 @@ class TestFilePromptStorage:
         class TestVars(PromptVariables):
             age: int  # Different from what's in storage
 
-        # Create prompt file with incompatible schema
-        import json
-        import os
-
-        prompt_file = os.path.join(temp_dir, "incompatible_test.json")
-        with open(prompt_file, "w") as f:
-            json.dump(
-                {
-                    "versions": {"v1": "Hello {name}"},
-                    "defaultVersionId": "v1",
-                    "variablesSchema": {
-                        "type": "object",
-                        "properties": {"name": {"type": "string"}},
-                        "required": ["name"],
-                    },
-                },
-                f,
-            )
+        write_prompt_folder(
+            temp_dir,
+            "incompatible_test",
+            versions={"v1": "Hello {name}"},
+            default_version_id="v1",
+            variables_schema={
+                "type": "object",
+                "properties": {"name": {"type": "string"}},
+                "required": ["name"],
+            },
+        )
 
         initialize_prompt_storage(temp_dir)
 
@@ -1116,20 +1035,13 @@ class TestFilePromptStorage:
         """Test that append_version updates the storage file."""
         from pixie.prompts.storage import initialize_prompt_storage, StorageBackedPrompt
 
-        # Create initial prompt file
-        import json
-        import os
-
-        prompt_file = os.path.join(temp_dir, "storage_update_test.json")
-        with open(prompt_file, "w") as f:
-            json.dump(
-                {
-                    "versions": {"v1": "Initial"},
-                    "defaultVersionId": "v1",
-                    "variablesSchema": {"type": "object", "properties": {}},
-                },
-                f,
-            )
+        write_prompt_folder(
+            temp_dir,
+            "storage_update_test",
+            versions={"v1": "Initial"},
+            default_version_id="v1",
+            variables_schema={"type": "object", "properties": {}},
+        )
 
         initialize_prompt_storage(temp_dir)
 
@@ -1138,12 +1050,9 @@ class TestFilePromptStorage:
         # Append version
         prompt.append_version(version_id="v2", content="Added version")
 
-        # Check file was updated
-        with open(prompt_file, "r") as f:
-            data = json.load(f)
-
-        assert "v2" in data["versions"]
-        assert data["versions"]["v2"] == "Added version"
+        prompt_dir = os.path.join(temp_dir, "storage_update_test")
+        with open(os.path.join(prompt_dir, "v2.mustache"), "r") as f:
+            assert f.read() == "Added version"
 
     @pytest.mark.asyncio
     async def test_storage_backed_prompt_update_default_updates_storage(
@@ -1152,20 +1061,13 @@ class TestFilePromptStorage:
         """Test that update_default_version_id updates the storage file."""
         from pixie.prompts.storage import initialize_prompt_storage, StorageBackedPrompt
 
-        # Create initial prompt file
-        import json
-        import os
-
-        prompt_file = os.path.join(temp_dir, "default_update_test.json")
-        with open(prompt_file, "w") as f:
-            json.dump(
-                {
-                    "versions": {"v1": "Version 1", "v2": "Version 2"},
-                    "defaultVersionId": "v1",
-                    "variablesSchema": {"type": "object", "properties": {}},
-                },
-                f,
-            )
+        write_prompt_folder(
+            temp_dir,
+            "default_update_test",
+            versions={"v1": "Version 1", "v2": "Version 2"},
+            default_version_id="v1",
+            variables_schema={"type": "object", "properties": {}},
+        )
 
         initialize_prompt_storage(temp_dir)
 
@@ -1174,8 +1076,8 @@ class TestFilePromptStorage:
         # Update default
         prompt.update_default_version_id("v2")
 
-        # Check file was updated
-        with open(prompt_file, "r") as f:
+        prompt_dir = os.path.join(temp_dir, "default_update_test")
+        with open(os.path.join(prompt_dir, "metadata.json"), "r") as f:
             data = json.load(f)
 
         assert data["defaultVersionId"] == "v2"
@@ -1187,20 +1089,13 @@ class TestFilePromptStorage:
         """Test that append_version raises error for existing version ID."""
         from pixie.prompts.storage import initialize_prompt_storage, StorageBackedPrompt
 
-        # Create prompt file
-        import json
-        import os
-
-        prompt_file = os.path.join(temp_dir, "duplicate_version_test.json")
-        with open(prompt_file, "w") as f:
-            json.dump(
-                {
-                    "versions": {"v1": "Version 1"},
-                    "defaultVersionId": "v1",
-                    "variablesSchema": {"type": "object", "properties": {}},
-                },
-                f,
-            )
+        write_prompt_folder(
+            temp_dir,
+            "duplicate_version_test",
+            versions={"v1": "Version 1"},
+            default_version_id="v1",
+            variables_schema={"type": "object", "properties": {}},
+        )
 
         initialize_prompt_storage(temp_dir)
 
@@ -1217,20 +1112,13 @@ class TestFilePromptStorage:
         """Test that update_default_version_id raises error for nonexistent version ID."""
         from pixie.prompts.storage import initialize_prompt_storage, StorageBackedPrompt
 
-        # Create prompt file
-        import json
-        import os
-
-        prompt_file = os.path.join(temp_dir, "nonexistent_default_test.json")
-        with open(prompt_file, "w") as f:
-            json.dump(
-                {
-                    "versions": {"v1": "Version 1"},
-                    "defaultVersionId": "v1",
-                    "variablesSchema": {"type": "object", "properties": {}},
-                },
-                f,
-            )
+        write_prompt_folder(
+            temp_dir,
+            "nonexistent_default_test",
+            versions={"v1": "Version 1"},
+            default_version_id="v1",
+            variables_schema={"type": "object", "properties": {}},
+        )
 
         initialize_prompt_storage(temp_dir)
 
@@ -1278,28 +1166,24 @@ class TestFilePromptStorage:
         from pixie.prompts.storage import initialize_prompt_storage, StorageBackedPrompt
         import os
 
-        # Create prompt file
-        prompt_file = os.path.join(temp_dir, "deletion_test.json")
-        with open(prompt_file, "w") as f:
-            json.dump(
-                {
-                    "versions": {"v1": "Hello {name}"},
-                    "defaultVersionId": "v1",
-                    "variablesSchema": {
-                        "type": "object",
-                        "properties": {"name": {"type": "string"}},
-                    },
-                },
-                f,
-            )
+        write_prompt_folder(
+            temp_dir,
+            "deletion_test",
+            versions={"v1": "Hello {name}"},
+            default_version_id="v1",
+            variables_schema={
+                "type": "object",
+                "properties": {"name": {"type": "string"}},
+            },
+        )
 
         # Initialize storage
         initialize_prompt_storage(temp_dir)
 
         prompt = StorageBackedPrompt(id="deletion_test")
 
-        # Delete the prompt file
-        os.remove(prompt_file)
+        # Delete the prompt folder metadata to simulate removal
+        os.remove(os.path.join(temp_dir, "deletion_test", "metadata.json"))
 
         # Attempt to access the deleted prompt
         # The prompt is still in storage's in-memory cache, so it should work
@@ -1362,23 +1246,16 @@ class TestInitializePromptStorage:
         class IncompatibleVars(PromptVariables):
             age: int
 
-        # Create prompt file directly
-        import json
-        import os
-
-        prompt_file = os.path.join(temp_dir, "schema_test.json")
-        with open(prompt_file, "w") as f:
-            json.dump(
-                {
-                    "versions": {"v1": "Hello {name}"},
-                    "defaultVersionId": "v1",
-                    "variablesSchema": {
-                        "type": "object",
-                        "properties": {"name": {"type": "string"}},
-                    },
-                },
-                f,
-            )
+        write_prompt_folder(
+            temp_dir,
+            "schema_test",
+            versions={"v1": "Hello {name}"},
+            default_version_id="v1",
+            variables_schema={
+                "type": "object",
+                "properties": {"name": {"type": "string"}},
+            },
+        )
 
         # Initialize storage
         initialize_prompt_storage(temp_dir)
@@ -1443,8 +1320,9 @@ class TestInitializePromptStorage:
         from pixie.prompts.storage import initialize_prompt_storage
         import os
 
-        # Create corrupted prompt file
-        corrupted_file = os.path.join(temp_dir, "corrupted_test.json")
+        prompt_dir = os.path.join(temp_dir, "corrupted_test")
+        os.makedirs(prompt_dir, exist_ok=True)
+        corrupted_file = os.path.join(prompt_dir, "metadata.json")
         with open(corrupted_file, "w") as f:
             f.write("{invalid_json}")
 
