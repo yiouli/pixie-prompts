@@ -9,7 +9,6 @@ from strawberry.scalars import JSON
 
 from pixie.prompts.prompt import variables_definition_to_schema
 from pixie.prompts.prompt_management import get_prompt, list_prompts
-from importlib.metadata import PackageNotFoundError, version
 
 logger = logging.getLogger(__name__)
 
@@ -62,13 +61,7 @@ class Query:
     async def health_check(self) -> str:
         """Health check endpoint."""
         logger.debug("Health check endpoint called")
-        try:
-            version_str = version("pixie-sdk")
-            logger.debug("Pixie SDK version: %s", version_str)
-            return version_str
-        except PackageNotFoundError as e:
-            logger.warning("Failed to get Pixie SDK version: %s", str(e))
-            return "0.0.0"
+        return "0.0.0"
 
     @strawberry.field
     def list_prompts(self) -> list[PromptMetadata]:
