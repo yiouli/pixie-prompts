@@ -33,7 +33,7 @@ def write_prompt_folder(
             f,
         )
     for version_id, content in versions.items():
-        with open(os.path.join(prompt_dir, f"{version_id}.mustache"), "w") as f:
+        with open(os.path.join(prompt_dir, f"{version_id}.jinja"), "w") as f:
             f.write(content)
 
 
@@ -185,13 +185,13 @@ class TestFilePromptStorage:
         prompt_dir = os.path.join(temp_dir, "no_metadata")
         os.makedirs(prompt_dir, exist_ok=True)
 
-        v1_path = os.path.join(prompt_dir, "v1.mustache")
+        v1_path = os.path.join(prompt_dir, "v1.jinja")
         with open(v1_path, "w") as f:
             f.write("first")
 
         time.sleep(0.02)
 
-        v2_path = os.path.join(prompt_dir, "v2.mustache")
+        v2_path = os.path.join(prompt_dir, "v2.jinja")
         with open(v2_path, "w") as f:
             f.write("second")
 
@@ -302,9 +302,9 @@ class TestFilePromptStorage:
         assert data["defaultVersionId"] == "v1"
         assert "variablesSchema" in data
 
-        with open(os.path.join(prompt_dir, "v1.mustache"), "r") as f:
+        with open(os.path.join(prompt_dir, "v1.jinja"), "r") as f:
             assert f.read() == "Hello {name}"
-        with open(os.path.join(prompt_dir, "v2.mustache"), "r") as f:
+        with open(os.path.join(prompt_dir, "v2.jinja"), "r") as f:
             assert f.read() == "Hi {name}"
 
     @pytest.mark.asyncio
@@ -340,9 +340,9 @@ class TestFilePromptStorage:
             metadata = json.load(f)
         assert metadata["defaultVersionId"] == "v1"
 
-        with open(os.path.join(prompt_dir, "v1.mustache"), "r") as f:
+        with open(os.path.join(prompt_dir, "v1.jinja"), "r") as f:
             assert f.read() == "Updated {name}"
-        with open(os.path.join(prompt_dir, "v3.mustache"), "r") as f:
+        with open(os.path.join(prompt_dir, "v3.jinja"), "r") as f:
             assert f.read() == "New version"
 
     @pytest.mark.asyncio
@@ -506,9 +506,9 @@ class TestFilePromptStorage:
             initialize_prompt_storage,
             StorageBackedPrompt,
         )
-        from pixie.prompts.prompt import PromptVariables
+        from pixie.prompts.prompt import Variables
 
-        class TestVars(PromptVariables):
+        class TestVars(Variables):
             name: str
 
         write_prompt_folder(
@@ -581,9 +581,9 @@ class TestFilePromptStorage:
             initialize_prompt_storage,
             StorageBackedPrompt,
         )
-        from pixie.prompts.prompt import PromptVariables
+        from pixie.prompts.prompt import Variables
 
-        class TestVars(PromptVariables):
+        class TestVars(Variables):
             name: str
 
         write_prompt_folder(
@@ -747,9 +747,9 @@ class TestFilePromptStorage:
         from pixie.prompts.storage import initialize_prompt_storage
         from pixie.prompts.prompt_management import create_prompt
         import pixie.prompts.prompt_management as pm_module
-        from pixie.prompts.prompt import PromptVariables
+        from pixie.prompts.prompt import Variables
 
-        class TestVars(PromptVariables):
+        class TestVars(Variables):
             name: str
 
         # Clear the registry and initialize storage
@@ -780,12 +780,12 @@ class TestFilePromptStorage:
         from pixie.prompts.storage import initialize_prompt_storage
         from pixie.prompts.prompt_management import create_prompt
         import pixie.prompts.prompt_management as pm_module
-        from pixie.prompts.prompt import PromptVariables
+        from pixie.prompts.prompt import Variables
 
-        class TestVars1(PromptVariables):
+        class TestVars1(Variables):
             name: str
 
-        class TestVars2(PromptVariables):
+        class TestVars2(Variables):
             age: int
 
         # Clear the registry and initialize storage
@@ -814,9 +814,9 @@ class TestFilePromptStorage:
     async def test_storage_backed_prompt_properties(self, temp_dir: str):
         """Test StorageBackedPrompt id and variables_definition properties."""
         from pixie.prompts.storage import initialize_prompt_storage, StorageBackedPrompt
-        from pixie.prompts.prompt import PromptVariables
+        from pixie.prompts.prompt import Variables
 
-        class TestVars(PromptVariables):
+        class TestVars(Variables):
             name: str
 
         initialize_prompt_storage(temp_dir)
@@ -829,9 +829,9 @@ class TestFilePromptStorage:
     async def test_storage_backed_prompt_get_variables_schema(self, temp_dir: str):
         """Test StorageBackedPrompt.get_variables_schema."""
         from pixie.prompts.storage import initialize_prompt_storage, StorageBackedPrompt
-        from pixie.prompts.prompt import PromptVariables
+        from pixie.prompts.prompt import Variables
 
-        class TestVars(PromptVariables):
+        class TestVars(Variables):
             name: str
             age: int
 
@@ -913,7 +913,7 @@ class TestFilePromptStorage:
 
         initialize_prompt_storage(temp_dir)
 
-        default_path = os.path.join(temp_dir, "created_at_test", "v1.mustache")
+        default_path = os.path.join(temp_dir, "created_at_test", "v1.jinja")
         prompt = StorageBackedPrompt(id="created_at_test")
 
         created_at = prompt.createdAt
@@ -929,13 +929,13 @@ class TestFilePromptStorage:
         prompt_dir = os.path.join(temp_dir, "no_metadata_storage")
         os.makedirs(prompt_dir, exist_ok=True)
 
-        v1_path = os.path.join(prompt_dir, "v1.mustache")
+        v1_path = os.path.join(prompt_dir, "v1.jinja")
         with open(v1_path, "w") as f:
             f.write("one")
 
         time.sleep(0.02)
 
-        v2_path = os.path.join(prompt_dir, "v2.mustache")
+        v2_path = os.path.join(prompt_dir, "v2.jinja")
         with open(v2_path, "w") as f:
             f.write("two")
 
@@ -1106,9 +1106,9 @@ class TestFilePromptStorage:
     ):
         """Test actualize with variables_definition performs schema compatibility check."""
         from pixie.prompts.storage import initialize_prompt_storage, StorageBackedPrompt
-        from pixie.prompts.prompt import PromptVariables
+        from pixie.prompts.prompt import Variables
 
-        class TestVars(PromptVariables):
+        class TestVars(Variables):
             name: str
 
         write_prompt_folder(
@@ -1140,9 +1140,9 @@ class TestFilePromptStorage:
     ):
         """Test actualize raises error when schema is incompatible."""
         from pixie.prompts.storage import initialize_prompt_storage, StorageBackedPrompt
-        from pixie.prompts.prompt import PromptVariables
+        from pixie.prompts.prompt import Variables
 
-        class TestVars(PromptVariables):
+        class TestVars(Variables):
             age: int  # Different from what's in storage
 
         write_prompt_folder(
@@ -1192,7 +1192,7 @@ class TestFilePromptStorage:
         prompt.append_version(version_id="v2", content="Added version")
 
         prompt_dir = os.path.join(temp_dir, "storage_update_test")
-        with open(os.path.join(prompt_dir, "v2.mustache"), "r") as f:
+        with open(os.path.join(prompt_dir, "v2.jinja"), "r") as f:
             assert f.read() == "Added version"
 
     @pytest.mark.asyncio
@@ -1379,12 +1379,12 @@ class TestInitializePromptStorage:
     ):
         """Test that appending a version with incompatible schema raises an error."""
         from pixie.prompts.storage import initialize_prompt_storage, StorageBackedPrompt
-        from pixie.prompts.prompt import PromptVariables
+        from pixie.prompts.prompt import Variables
 
-        class OriginalVars(PromptVariables):
+        class OriginalVars(Variables):
             name: str
 
-        class IncompatibleVars(PromptVariables):
+        class IncompatibleVars(Variables):
             age: int
 
         write_prompt_folder(

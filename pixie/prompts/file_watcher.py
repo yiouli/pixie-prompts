@@ -107,12 +107,8 @@ class _StorageChangeHandler(FileSystemEventHandler):
         self._debounce_seconds = debounce_seconds
         # Default to common prompt file formats if not specified
         self._watch_extensions = watch_extensions or {
-            ".yaml",
-            ".yml",
             ".json",
-            ".txt",
-            ".mustache",
-            ".md",
+            ".jinja",
         }
         self._last_seen: dict[Path, tuple[float | None, int | None]] = {}
 
@@ -187,8 +183,12 @@ class _StorageChangeHandler(FileSystemEventHandler):
         # Skip duplicate events where the file's mtime/size did not change
         if not event.is_directory and event.event_type in {"created", "modified"}:
             src = event.src_path
-            if isinstance(src, str) and self._is_ignored_path(Path(src)):
-                return
+            if isinstance(src, str):
+                path = Path(src)
+                if self._is_ignored_path(path):
+                    return
+                if self._is_duplicate_event(path):
+                    return
 
         # Ignore pure directory events (unless it's a delete/move that could affect contents)
         # We still want to know if a directory containing prompt files was deleted/moved

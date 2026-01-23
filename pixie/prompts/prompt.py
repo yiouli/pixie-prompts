@@ -11,12 +11,12 @@ from jsonsubschema import isSubschema
 from pydantic import BaseModel
 
 
-class PromptVariables(BaseModel):
+class Variables(BaseModel):
     # TODO add validation to prevent fields using reserved names
     pass
 
 
-TPromptVar = TypeVar("TPromptVar", bound=PromptVariables | None)
+TPromptVar = TypeVar("TPromptVar", bound=Variables | None)
 
 
 _prompt_registry: dict[str, "BasePrompt"] = {}
@@ -36,7 +36,7 @@ class _CompiledPrompt:
     value: str
     prompt: "BasePrompt | OutdatedPrompt"
     version_id: str
-    variables: PromptVariables | None
+    variables: Variables | None
 
 
 _compiled_prompt_registry: dict[int, _CompiledPrompt] = {}
@@ -191,7 +191,7 @@ def variables_definition_to_schema(definition: type[TPromptVar]) -> dict[str, An
     if definition is NoneType:
         return EMPTY_VARIABLES_SCHEMA
 
-    return cast(type[PromptVariables], definition).model_json_schema()
+    return cast(type[Variables], definition).model_json_schema()
 
 
 class BasePrompt(BaseUntypedPrompt, Generic[TPromptVar]):

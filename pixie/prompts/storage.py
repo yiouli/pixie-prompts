@@ -19,6 +19,9 @@ from .prompt import (
 logger = logging.getLogger(__name__)
 
 
+VERSION_FILE_EXTENSION = ".jinja"
+
+
 @dataclass(frozen=True)
 class _PromptLoadFailure:
     prompt_id: str | None
@@ -87,7 +90,7 @@ class _FilePromptStorage(PromptStorage):
                 versions: dict[str, str] = {}
                 version_creation_times: dict[str, float] = {}
                 for filename in os.listdir(prompt_path):
-                    if not filename.endswith(".mustache"):
+                    if not filename.endswith(VERSION_FILE_EXTENSION):
                         continue
                     version_id, _ = os.path.splitext(filename)
                     version_path = os.path.join(prompt_path, filename)
@@ -170,22 +173,26 @@ class _FilePromptStorage(PromptStorage):
         existing_versions = {
             os.path.splitext(filename)[0]
             for filename in os.listdir(prompt_dir)
-            if filename.endswith(".mustache")
+            if filename.endswith("{VERSION_FILE_EXTENSION}")
         }
 
         versions = prompt.get_versions()
         for version_id, content in versions.items():
-            version_path = os.path.join(prompt_dir, f"{version_id}.mustache")
+            version_path = os.path.join(
+                prompt_dir, f"{version_id}{VERSION_FILE_EXTENSION}"
+            )
             with open(version_path, "w") as vf:
                 vf.write(content)
 
         for stale_version in existing_versions - set(versions.keys()):
-            stale_path = os.path.join(prompt_dir, f"{stale_version}.mustache")
+            stale_path = os.path.join(
+                prompt_dir, f"{stale_version}{VERSION_FILE_EXTENSION}"
+            )
             os.remove(stale_path)
 
         default_version_id = prompt.get_default_version_id()
         default_version_path = os.path.join(
-            prompt_dir, f"{default_version_id}.mustache"
+            prompt_dir, f"{default_version_id}{VERSION_FILE_EXTENSION}"
         )
         if not os.path.exists(default_version_path):
             raise FileNotFoundError(

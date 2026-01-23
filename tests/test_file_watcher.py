@@ -74,14 +74,14 @@ def test_storage_change_handler_watches_mustache(monkeypatch):
     handler._trigger_reload = lambda: calls.append("triggered")  # type: ignore[attr-defined]
 
     class FakeEvent:
-        src_path = "/tmp/prompt/sample.mustache"
+        src_path = "/tmp/prompt/sample.jinja"
         dest_path = None
         is_directory = False
         event_type = "created"
 
     handler.on_any_event(FakeEvent())
 
-    assert ".mustache" in handler._watch_extensions
+    assert ".jinja" in handler._watch_extensions
     assert calls == ["scheduled", "triggered"]
 
     class IgnoredEvent(FakeEvent):
@@ -93,7 +93,7 @@ def test_storage_change_handler_watches_mustache(monkeypatch):
 
 
 def test_storage_change_handler_dedupes_repeated_events(monkeypatch, tmp_path):
-    prompt_file = tmp_path / "sample.mustache"
+    prompt_file = tmp_path / "sample.jinja"
     prompt_file.write_text("hello", encoding="utf-8")
 
     calls: list[str] = []

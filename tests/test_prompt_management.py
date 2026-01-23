@@ -7,14 +7,14 @@ from pixie.prompts.prompt_management import (
     get_prompt,
     _registry,
 )
-from pixie.prompts.prompt import PromptVariables
+from pixie.prompts.prompt import Variables
 
 
-class DummyVar1(PromptVariables):
+class DummyVar1(Variables):
     pass
 
 
-class DummyVar2(PromptVariables):
+class DummyVar2(Variables):
     pass
 
 

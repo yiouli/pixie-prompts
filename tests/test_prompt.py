@@ -10,7 +10,7 @@ from pixie.prompts.storage import _FilePromptStorage
 from pixie.prompts.prompt import (
     DEFAULT_VERSION_ID,
     BasePrompt,
-    PromptVariables,
+    Variables,
     BaseUntypedPrompt,
     OutdatedPrompt,
     _prompt_registry,  # Import the registry explicitly
@@ -18,25 +18,25 @@ from pixie.prompts.prompt import (
 )
 
 
-class SamplePromptVariables(PromptVariables):
-    """Sample subclass of PromptVariables for testing."""
+class SampleVariables(Variables):
+    """Sample subclass of Variables for testing."""
 
     name: str
     age: int
     city: str = "Unknown"
 
 
-class AnotherPromptVariables(PromptVariables):
+class AnotherVariables(Variables):
     """Another sample subclass with different fields."""
 
     greeting: str
     topic: str
 
 
-class NestedPromptVariables(PromptVariables):
+class NestedVariables(Variables):
     """Sample with nested model."""
 
-    user: SamplePromptVariables
+    user: SampleVariables
     message: str
 
 
@@ -101,10 +101,10 @@ class TestPromptInitialization:
         """Test initialization with variable definitions."""
         prompt = BasePrompt(
             versions="Hello, {name}!",
-            variables_definition=SamplePromptVariables,
+            variables_definition=SampleVariables,
         )
 
-        assert prompt._variables_definition == SamplePromptVariables
+        assert prompt._variables_definition == SampleVariables
 
     def test_init_with_none_variables_definition(self):
         """Test initialization with NoneType variable definitions (default)."""
@@ -206,10 +206,10 @@ class TestPromptCompileWithVariables:
         template = "Hello, {{name}}! You are {{age}} years old."
         prompt = BasePrompt(
             versions=template,
-            variables_definition=SamplePromptVariables,
+            variables_definition=SampleVariables,
         )
 
-        variables = SamplePromptVariables(name="Alice", age=30)
+        variables = SampleVariables(name="Alice", age=30)
         result = prompt.compile(variables)
 
         assert result == "Hello, Alice! You are 30 years old."
@@ -219,10 +219,10 @@ class TestPromptCompileWithVariables:
         template = "Hello, {{name}} from {{city}}!"
         prompt = BasePrompt(
             versions=template,
-            variables_definition=SamplePromptVariables,
+            variables_definition=SampleVariables,
         )
 
-        variables = SamplePromptVariables(name="Bob", age=25)
+        variables = SampleVariables(name="Bob", age=25)
         result = prompt.compile(variables)
 
         assert result == "Hello, Bob from Unknown!"
@@ -236,11 +236,11 @@ class TestPromptCompileWithVariables:
         }
         prompt = BasePrompt(
             versions=versions,
-            variables_definition=SamplePromptVariables,
+            variables_definition=SampleVariables,
             default_version_id="greeting",
         )
 
-        variables = SamplePromptVariables(name="Charlie", age=35)
+        variables = SampleVariables(name="Charlie", age=35)
 
         greeting = prompt.compile(variables, version_id="greeting")
         farewell = prompt.compile(variables, version_id="farewell")
@@ -255,10 +255,10 @@ class TestPromptCompileWithVariables:
         template = "{{greeting}}, {{topic}} is fascinating!"
         prompt = BasePrompt(
             versions=template,
-            variables_definition=AnotherPromptVariables,
+            variables_definition=AnotherVariables,
         )
 
-        variables = AnotherPromptVariables(greeting="Hello", topic="Python")
+        variables = AnotherVariables(greeting="Hello", topic="Python")
         result = prompt.compile(variables)
 
         assert result == "Hello, Python is fascinating!"
@@ -273,10 +273,10 @@ Status: Active
 """
         prompt = BasePrompt(
             versions=template,
-            variables_definition=SamplePromptVariables,
+            variables_definition=SampleVariables,
         )
 
-        variables = SamplePromptVariables(name="Diana", age=28, city="Paris")
+        variables = SampleVariables(name="Diana", age=28, city="Paris")
         result = prompt.compile(variables)
 
         expected = """
@@ -294,11 +294,11 @@ Status: Active"""
         }
         prompt = BasePrompt(
             versions=versions,
-            variables_definition=SamplePromptVariables,
+            variables_definition=SampleVariables,
             default_version_id="v2",
         )
 
-        variables = SamplePromptVariables(name="Eve", age=40)
+        variables = SampleVariables(name="Eve", age=40)
         result = prompt.compile(variables)
 
         assert result == "Version 2: Eve"
@@ -310,11 +310,11 @@ Status: Active"""
         )
         prompt = BasePrompt(
             versions=template,
-            variables_definition=NestedPromptVariables,
+            variables_definition=NestedVariables,
         )
 
-        variables = NestedPromptVariables(
-            user=SamplePromptVariables(name="Alice", age=30, city="NYC"),
+        variables = NestedVariables(
+            user=SampleVariables(name="Alice", age=30, city="NYC"),
             message="Welcome!",
         )
         result = prompt.compile(variables)
@@ -325,7 +325,7 @@ Status: Active"""
         """Test that ValueError is raised when variables are required but not provided."""
         prompt = BasePrompt(
             versions="Hello, {name}!",
-            variables_definition=SamplePromptVariables,
+            variables_definition=SampleVariables,
         )
 
         with pytest.raises(ValueError):
@@ -335,7 +335,7 @@ Status: Active"""
         """Test that ValueError is raised when None is explicitly passed."""
         prompt = BasePrompt(
             versions="Hello, {name}!",
-            variables_definition=SamplePromptVariables,
+            variables_definition=SampleVariables,
         )
 
         with pytest.raises(ValueError):
@@ -362,10 +362,10 @@ class TestPromptEdgeCases:
         special_text = "Hello! @#$%^&*() {{name}} [brackets] 'quotes' \"double\""
         prompt = BasePrompt(
             versions=special_text,
-            variables_definition=SamplePromptVariables,
+            variables_definition=SampleVariables,
         )
 
-        variables = SamplePromptVariables(name="Test", age=20)
+        variables = SampleVariables(name="Test", age=20)
         result = prompt.compile(variables)
 
         assert result == "Hello! @#$%^&*() Test [brackets] 'quotes' \"double\""
@@ -375,10 +375,10 @@ class TestPromptEdgeCases:
         template = "This {is} not {{name}} a variable"
         prompt = BasePrompt(
             versions=template,
-            variables_definition=SamplePromptVariables,
+            variables_definition=SampleVariables,
         )
 
-        variables = SamplePromptVariables(name="formatted", age=10)
+        variables = SampleVariables(name="formatted", age=10)
         result = prompt.compile(variables)
 
         # Python's .format() handles {{}} as escaped braces
@@ -389,10 +389,10 @@ class TestPromptEdgeCases:
         unicode_text = "Hello, {{name}}! 你好 🎉 Привет"
         prompt = BasePrompt(
             versions=unicode_text,
-            variables_definition=SamplePromptVariables,
+            variables_definition=SampleVariables,
         )
 
-        variables = SamplePromptVariables(name="World", age=1)
+        variables = SampleVariables(name="World", age=1)
         result = prompt.compile(variables)
 
         assert result == "Hello, World! 你好 🎉 Привет"
@@ -404,10 +404,10 @@ Line 2: {{age}}
 Line 3: {{city}}"""
         prompt = BasePrompt(
             versions=template,
-            variables_definition=SamplePromptVariables,
+            variables_definition=SampleVariables,
         )
 
-        variables = SamplePromptVariables(name="Frank", age=50, city="London")
+        variables = SampleVariables(name="Frank", age=50, city="London")
         result = prompt.compile(variables)
 
         expected = """Line 1: Frank
@@ -427,10 +427,10 @@ Line 3: London"""
         template = "Hello, {{name}} and {{missing_var}}!"
         prompt = BasePrompt(
             versions=template,
-            variables_definition=SamplePromptVariables,
+            variables_definition=SampleVariables,
         )
 
-        variables = SamplePromptVariables(name="Test", age=25)
+        variables = SampleVariables(name="Test", age=25)
 
         with pytest.raises(UndefinedError):
             prompt.compile(variables)
@@ -440,11 +440,11 @@ Line 3: London"""
         template = "Hello, {{name}}!"
         prompt = BasePrompt(
             versions=template,
-            variables_definition=SamplePromptVariables,
+            variables_definition=SampleVariables,
         )
 
         # Model has age and city, but template only uses name
-        variables = SamplePromptVariables(name="Grace", age=60, city="Tokyo")
+        variables = SampleVariables(name="Grace", age=60, city="Tokyo")
         result = prompt.compile(variables)
 
         assert result == "Hello, Grace!"
@@ -454,10 +454,10 @@ Line 3: London"""
         template = "Count: {{age}}, Double: {{age}}"
         prompt = BasePrompt(
             versions=template,
-            variables_definition=SamplePromptVariables,
+            variables_definition=SampleVariables,
         )
 
-        variables = SamplePromptVariables(name="Test", age=42)
+        variables = SampleVariables(name="Test", age=42)
         result = prompt.compile(variables)
 
         assert result == "Count: 42, Double: 42"
@@ -476,13 +476,13 @@ class TestPromptTypeAnnotations:
         assert result == "No variables here"
 
     def test_prompt_with_custom_type_generic(self):
-        """Test Prompt with custom PromptVariables type."""
-        prompt: BasePrompt[SamplePromptVariables] = BasePrompt(
+        """Test Prompt with custom Variables type."""
+        prompt: BasePrompt[SampleVariables] = BasePrompt(
             versions="Name: {{name}}",
-            variables_definition=SamplePromptVariables,
+            variables_definition=SampleVariables,
         )
 
-        variables = SamplePromptVariables(name="Type Test", age=99)
+        variables = SampleVariables(name="Type Test", age=99)
         result = prompt.compile(variables)
 
         assert result == "Name: Type Test"
@@ -500,11 +500,11 @@ class TestPromptIntegration:
         }
         prompt = BasePrompt(
             versions=versions,
-            variables_definition=AnotherPromptVariables,
+            variables_definition=AnotherVariables,
             default_version_id="medium",
         )
 
-        variables = AnotherPromptVariables(greeting="Hi", topic="AI")
+        variables = AnotherVariables(greeting="Hi", topic="AI")
 
         short = prompt.compile(variables, version_id="short")
         medium = prompt.compile(variables)  # Uses default
@@ -532,10 +532,10 @@ class TestPromptIntegration:
         template = "Hello, {{name}}!"
         prompt = BasePrompt(
             versions=template,
-            variables_definition=SamplePromptVariables,
+            variables_definition=SampleVariables,
         )
 
-        variables = SamplePromptVariables(name="Harry", age=45)
+        variables = SampleVariables(name="Harry", age=45)
 
         results = [prompt.compile(variables) for _ in range(5)]
 
@@ -545,11 +545,11 @@ class TestPromptIntegration:
         """Test that different variable instances with same values produce same output."""
         prompt = BasePrompt(
             versions="{{name}} is {{age}}",
-            variables_definition=SamplePromptVariables,
+            variables_definition=SampleVariables,
         )
 
-        vars1 = SamplePromptVariables(name="Ivy", age=33)
-        vars2 = SamplePromptVariables(name="Ivy", age=33)
+        vars1 = SampleVariables(name="Ivy", age=33)
+        vars2 = SampleVariables(name="Ivy", age=33)
 
         result1 = prompt.compile(vars1)
         result2 = prompt.compile(vars2)
@@ -635,9 +635,9 @@ class TestPromptUpdateAndOutdated:
         """Test that compiled prompts reference OutdatedPrompt after prompt update."""
         prompt = BasePrompt(
             versions={"v1": "Version {name}"},
-            variables_definition=SamplePromptVariables,
+            variables_definition=SampleVariables,
         )
-        variables = SamplePromptVariables(name="Test", age=25)
+        variables = SampleVariables(name="Test", age=25)
 
         # Compile a prompt
         compiled_result = prompt.compile(variables)
@@ -672,9 +672,9 @@ class TestPromptUpdateAndOutdated:
         """Test that trying to compile an outdated compiled prompt raises error."""
         prompt = BasePrompt(
             versions={"v1": "Version {name}"},
-            variables_definition=SamplePromptVariables,
+            variables_definition=SampleVariables,
         )
-        variables = SamplePromptVariables(name="Test", age=25)
+        variables = SampleVariables(name="Test", age=25)
 
         # Compile a prompt
         compiled_result = prompt.compile(variables)
@@ -745,9 +745,9 @@ class TestBasePromptNewMethods:
         """Test that append_version creates an OutdatedPrompt for compiled prompts."""
         prompt = BasePrompt(
             versions={"v1": "Version {name}"},
-            variables_definition=SamplePromptVariables,
+            variables_definition=SampleVariables,
         )
-        variables = SamplePromptVariables(name="Test", age=25)
+        variables = SampleVariables(name="Test", age=25)
 
         # Compile to create a compiled prompt entry
         compiled_result = prompt.compile(variables)
@@ -798,10 +798,10 @@ class TestBasePromptNewMethods:
         """Test that update_default_version_id creates OutdatedPrompt for compiled prompts."""
         prompt = BasePrompt(
             versions={"v1": "Version {name}", "v2": "Other {name}"},
-            variables_definition=SamplePromptVariables,
+            variables_definition=SampleVariables,
             default_version_id="v1",
         )
-        variables = SamplePromptVariables(name="Test", age=25)
+        variables = SampleVariables(name="Test", age=25)
 
         # Compile to create a compiled prompt entry
         compiled_result = prompt.compile(variables)
@@ -823,12 +823,12 @@ class TestBasePromptNewMethods:
         """Test that appended versions compile correctly with variables."""
         prompt = BasePrompt(
             versions={"v1": "Hello {{name}}"},
-            variables_definition=SamplePromptVariables,
+            variables_definition=SampleVariables,
         )
 
         prompt.append_version(version_id="v2", content="Hi {{name}}, you are {{age}}")
 
-        variables = SamplePromptVariables(name="Alice", age=30)
+        variables = SampleVariables(name="Alice", age=30)
 
         result_v1 = prompt.compile(variables, version_id="v1")
         result_v2 = prompt.compile(variables, version_id="v2")
@@ -840,11 +840,11 @@ class TestBasePromptNewMethods:
         """Test that updating default version affects compile() without version_id parameter."""
         prompt = BasePrompt(
             versions={"v1": "Version 1", "v2": "Version 2"},
-            variables_definition=SamplePromptVariables,
+            variables_definition=SampleVariables,
             default_version_id="v1",
         )
 
-        variables = SamplePromptVariables(name="Test", age=25)
+        variables = SampleVariables(name="Test", age=25)
 
         # Initially uses v1
         result_before = prompt.compile(variables)
@@ -875,7 +875,7 @@ class TestUpdatePromptRegistry:
         original_prompt = BaseUntypedPrompt(versions={"v1": "Original version"})
         # Manually add to registry with variable definitions
         _prompt_registry[original_prompt.id] = BasePrompt.from_untyped(
-            original_prompt, variables_definition=SamplePromptVariables
+            original_prompt, variables_definition=SampleVariables
         )
 
         # Temporarily remove from registry to create updated UntypedPrompt
@@ -887,7 +887,7 @@ class TestUpdatePromptRegistry:
 
         # Add back to registry to simulate existing
         _prompt_registry[original_prompt.id] = BasePrompt.from_untyped(
-            original_prompt, variables_definition=SamplePromptVariables
+            original_prompt, variables_definition=SampleVariables
         )
 
         result = BasePrompt.update_prompt_registry(updated_prompt)
@@ -896,7 +896,7 @@ class TestUpdatePromptRegistry:
         versions = result.get_versions()
         assert versions["v1"] == "Updated version"
         assert (
-            result.variables_definition == SamplePromptVariables
+            result.variables_definition == SampleVariables
         )  # Should retain original var_def
 
 
@@ -926,7 +926,7 @@ class TestFilePromptStorage:
 
             # Verify the file content
             prompt_dir = os.path.join(temp_dir, prompt.id)
-            with open(os.path.join(prompt_dir, "v1.mustache"), "r") as f:
+            with open(os.path.join(prompt_dir, "v1.jinja"), "r") as f:
                 assert f.read() == "Updated version"
 
 
@@ -941,10 +941,10 @@ class TestVariablesDefinitionToSchema:
         assert result == {"type": "object", "properties": {}}
 
     def test_prompt_variables_returns_json_schema(self):
-        """Test that PromptVariables subclass returns proper JSON schema."""
+        """Test that Variables subclass returns proper JSON schema."""
         from pixie.prompts.prompt import variables_definition_to_schema
 
-        result = variables_definition_to_schema(SamplePromptVariables)
+        result = variables_definition_to_schema(SampleVariables)
 
         assert result["type"] == "object"
         assert "properties" in result
@@ -959,11 +959,11 @@ class TestVariablesDefinitionToSchema:
         # city has default, so not required
 
     def test_different_variable_classes_have_different_schemas(self):
-        """Test that different PromptVariables classes produce different schemas."""
+        """Test that different Variables classes produce different schemas."""
         from pixie.prompts.prompt import variables_definition_to_schema
 
-        schema1 = variables_definition_to_schema(SamplePromptVariables)
-        schema2 = variables_definition_to_schema(AnotherPromptVariables)
+        schema1 = variables_definition_to_schema(SampleVariables)
+        schema2 = variables_definition_to_schema(AnotherVariables)
 
         assert schema1 != schema2
         assert "name" in schema1["properties"]
@@ -990,11 +990,11 @@ class TestBasePromptFromUntyped:
             },
         )
 
-        # SamplePromptVariables has name, age, city (with default)
+        # SampleVariables has name, age, city (with default)
         # This should be compatible
-        typed = BasePrompt.from_untyped(untyped, SamplePromptVariables)
+        typed = BasePrompt.from_untyped(untyped, SampleVariables)
 
-        assert typed.variables_definition == SamplePromptVariables
+        assert typed.variables_definition == SampleVariables
         assert typed.get_versions() == {"v1": "Hello {name}"}
 
     async def test_from_untyped_with_incompatible_schema_raises_error(self):
@@ -1013,9 +1013,9 @@ class TestBasePromptFromUntyped:
             },
         )
 
-        # SamplePromptVariables has name, age, city - incompatible
+        # SampleVariables has name, age, city - incompatible
         with pytest.raises(TypeError):
-            BasePrompt.from_untyped(untyped, SamplePromptVariables)
+            BasePrompt.from_untyped(untyped, SampleVariables)
 
     async def test_from_untyped_with_nonetype(self):
         """Test that from_untyped works with NoneType."""
@@ -1050,12 +1050,12 @@ class TestBasePromptFromUntyped:
             variables_schema={"type": "object", "properties": {}},
         )
 
-        # Should accept any PromptVariables subclass
-        typed1 = BasePrompt.from_untyped(untyped, SamplePromptVariables)
-        typed2 = BasePrompt.from_untyped(untyped, AnotherPromptVariables)
+        # Should accept any Variables subclass
+        typed1 = BasePrompt.from_untyped(untyped, SampleVariables)
+        typed2 = BasePrompt.from_untyped(untyped, AnotherVariables)
 
-        assert typed1.variables_definition == SamplePromptVariables
-        assert typed2.variables_definition == AnotherPromptVariables
+        assert typed1.variables_definition == SampleVariables
+        assert typed2.variables_definition == AnotherVariables
 
 
 @pytest.mark.asyncio
@@ -1137,12 +1137,12 @@ class TestOutdatedPromptGetMethods:
         """Test that OutdatedPrompt preserves variables_definition."""
         prompt = BasePrompt(
             versions={"v1": "Hello {name}"},
-            variables_definition=SamplePromptVariables,
+            variables_definition=SampleVariables,
         )
 
         outdated = OutdatedPrompt.from_prompt(prompt)
 
-        assert outdated.variables_definition == SamplePromptVariables
+        assert outdated.variables_definition == SampleVariables
 
 
 class TestGetCompiledPrompt:
@@ -1199,9 +1199,9 @@ class TestGetCompiledPrompt:
         from pixie.prompts.prompt import get_compiled_prompt
 
         prompt = BasePrompt(
-            versions="Hello, {{name}}!", variables_definition=SamplePromptVariables
+            versions="Hello, {{name}}!", variables_definition=SampleVariables
         )
-        variables = SamplePromptVariables(name="Alice", age=25)
+        variables = SampleVariables(name="Alice", age=25)
         compiled_text = prompt.compile(variables)
 
         result = get_compiled_prompt(compiled_text)

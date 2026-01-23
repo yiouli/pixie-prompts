@@ -1,4 +1,4 @@
-from .prompt import Prompt, PromptVariables
+from .prompt import Prompt, Variables
 from .storage import initialize_prompt_storage, StorageBackedPrompt
 from .prompt_management import (
     create_prompt,
@@ -8,7 +8,7 @@ from .prompt_management import (
 
 __all__ = [
     "Prompt",
-    "PromptVariables",
+    "Variables",
     "StorageBackedPrompt",
     "create_prompt",
     "get_prompt",
