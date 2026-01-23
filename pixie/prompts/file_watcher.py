@@ -48,6 +48,13 @@ def discover_and_load_modules():
         if not re.search(r"(?:^|\s)pixie(?=[\s.])", content):
             continue
 
+        # Check for ignore directive
+        if any(
+            re.fullmatch(r"#\s*pixie\s*:\s*ignore", line.strip())
+            for line in content.splitlines()
+        ):
+            continue
+
         # Load the module with a unique name based on path
         relative_path = py_file.relative_to(cwd)
         module_name = str(relative_path.with_suffix("")).replace("/", ".")

@@ -94,6 +94,73 @@ def test_discover_and_load_modules_filters_by_pixie_content(
         sys.modules.pop(module_name, None)
 
 
+def test_discover_and_load_modules_ignores_files_with_pixie_ignore_directive(
+    monkeypatch, tmp_path, fresh_sys_path
+):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(builtins, "_pixie_test_markers", [], raising=False)
+
+    # File with pixie import but ignore directive - should not be loaded
+    (tmp_path / "ignored.py").write_text(
+        "# pixie: ignore\nimport pixie\nimport builtins\nbuiltins._pixie_test_markers.append('ignored')\n",
+        encoding="utf-8",
+    )
+    # File with pixie import and ignore with extra whitespace - should not be loaded
+    (tmp_path / "ignored_whitespace.py").write_text(
+        "  # pixie: ignore  \nimport pixie\nimport builtins\nbuiltins._pixie_test_markers.append('ignored_ws')\n",
+        encoding="utf-8",
+    )
+    # File with no space after # - should not be loaded
+    (tmp_path / "ignored_no_space.py").write_text(
+        "#pixie: ignore\nimport pixie\nimport builtins\nbuiltins._pixie_test_markers.append('ignored_no_space')\n",
+        encoding="utf-8",
+    )
+    # File with no space after : - should not be loaded
+    (tmp_path / "ignored_no_space_colon.py").write_text(
+        (
+            "# pixie:ignore\n"
+            "import pixie\n"
+            "import builtins\n"
+            "builtins._pixie_test_markers.append('ignored_no_space_colon')\n"
+        ),
+        encoding="utf-8",
+    )
+    # File with multiple spaces - should not be loaded
+    (tmp_path / "ignored_multi_space.py").write_text(
+        (
+            "#  pixie  :  ignore\n"
+            "import pixie\n"
+            "import builtins\n"
+            "builtins._pixie_test_markers.append('ignored_multi_space')\n"
+        ),
+        encoding="utf-8",
+    )
+    # File with pixie import and partial ignore - should be loaded
+    (tmp_path / "partial_ignore.py").write_text(
+        "# pixie: ignore this\nimport pixie\nimport builtins\nbuiltins._pixie_test_markers.append('partial')\n",
+        encoding="utf-8",
+    )
+    # File with pixie import and ignore not on its own line - should be loaded
+    (tmp_path / "inline_ignore.py").write_text(
+        "import pixie  # pixie: ignore\nimport builtins\nbuiltins._pixie_test_markers.append('inline')\n",
+        encoding="utf-8",
+    )
+    # Normal file with pixie - should be loaded
+    (tmp_path / "normal.py").write_text(
+        "import pixie\nimport builtins\nbuiltins._pixie_test_markers.append('normal')\n",
+        encoding="utf-8",
+    )
+
+    file_watcher.discover_and_load_modules()
+
+    markers = builtins._pixie_test_markers  # type: ignore
+    assert set(markers) == {"partial", "inline", "normal"}
+    assert str(tmp_path) in sys.path
+
+    for module_name in ["partial_ignore", "inline_ignore", "normal"]:
+        sys.modules.pop(module_name, None)
+
+
 def test_discover_and_load_modules_ignores_pixie_files_in_ignored_dirs(
     monkeypatch, tmp_path, fresh_sys_path
 ):
