@@ -41,13 +41,21 @@ class TKeyValue:
 
 
 @strawberry.type
+class PromptVersion:
+    """Prompt version information."""
+
+    version_id: str
+    content: str
+    created_at: float
+
+
+@strawberry.type
 class Prompt:
     """Full prompt information including versions."""
 
     id: strawberry.ID
     variables_schema: JSON
-    versions: list[TKeyValue]
-    created_at: float | None
+    versions: list[PromptVersion]
     default_version_id: str | None
     """default version id can only be None if versions is empty"""
     description: Optional[str] = None
@@ -115,10 +123,14 @@ class Query:
                 default_version_id=None,
                 description=prompt_with_registration.description,
                 module=prompt_with_registration.module,
-                created_at=None,
             )
         versions_dict = prompt.get_versions()
-        versions = [TKeyValue(key=k, value=v) for k, v in versions_dict.items()]
+        versions = [
+            PromptVersion(
+                version_id=k, content=v, created_at=prompt.get_version_creation_time(k)
+            )
+            for k, v in versions_dict.items()
+        ]
         default_version_id: str = prompt.get_default_version_id()
         variables_schema = prompt.get_variables_schema()
         return Prompt(
@@ -128,7 +140,6 @@ class Query:
             default_version_id=default_version_id,
             description=prompt_with_registration.description,
             module=prompt_with_registration.module,
-            created_at=prompt.created_at,
         )
 
 

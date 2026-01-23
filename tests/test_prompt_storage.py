@@ -181,7 +181,7 @@ class TestFilePromptStorage:
         assert isinstance(failures[0].error, KeyError)
 
     def test_load_without_metadata_uses_latest_version(self, temp_dir: str):
-        """When metadata is missing, the latest created version becomes default and created_at is recorded."""
+        """When metadata is missing, the latest created version becomes default and per-version ctime is recorded."""
         prompt_dir = os.path.join(temp_dir, "no_metadata")
         os.makedirs(prompt_dir, exist_ok=True)
 
@@ -200,7 +200,12 @@ class TestFilePromptStorage:
         prompt = storage.get("no_metadata")
         assert prompt.get_versions() == {"v1": "first", "v2": "second"}
         assert prompt.get_default_version_id() == "v2"
-        assert prompt.get_created_at() == pytest.approx(os.path.getctime(v2_path))
+        assert prompt.get_version_creation_time("v1") == pytest.approx(
+            os.path.getctime(v1_path)
+        )
+        assert prompt.get_version_creation_time("v2") == pytest.approx(
+            os.path.getctime(v2_path)
+        )
 
     def test_load_without_metadata_and_no_versions_fails(self, temp_dir: str):
         """Loading a prompt without metadata still fails when no version files exist."""
@@ -308,42 +313,68 @@ class TestFilePromptStorage:
             assert f.read() == "Hi {name}"
 
     @pytest.mark.asyncio
-    async def test_save_updates_existing_prompt(
+    async def test_save_existing_prompt_raises_on_content_change(
         self, temp_dir: str, sample_prompt_data: Dict[str, Dict]
     ):
-        """Test that save updates an existing prompt and returns False."""
+        """Changing existing version content should raise and leave files untouched."""
         self.create_sample_files(temp_dir, sample_prompt_data)
         storage = _FilePromptStorage(temp_dir)
 
-        # Register the loaded prompts
-        from pixie.prompts.prompt import BasePrompt
+        prompt_dir = os.path.join(temp_dir, "prompt1")
+        original_v1_path = os.path.join(prompt_dir, "v1.jinja")
+        with open(original_v1_path, "r") as f:
+            original_content = f.read()
+        original_ctime = os.path.getctime(original_v1_path)
 
-        for p in storage._prompts.values():
-            BasePrompt.from_untyped(p)
-
-        # Modify the existing prompt
-        storage._prompts["prompt1"]
         updated_versions = {"v1": "Updated {name}", "v3": "New version"}
         updated_prompt = BaseUntypedPrompt(
             versions=updated_versions, default_version_id="v1", id="prompt1"
         )
 
-        result = storage.save(updated_prompt)
-        assert result is False  # Should return False for existing prompt
+        with pytest.raises(ValueError, match="already exists with different content"):
+            storage.save(updated_prompt)
 
-        # Check in-memory was updated
-        assert storage._prompts["prompt1"] is updated_prompt
-        assert storage._prompts["prompt1"].get_versions() == updated_versions
+        with open(original_v1_path, "r") as f:
+            assert f.read() == original_content
+        assert os.path.getctime(original_v1_path) == pytest.approx(original_ctime)
+        assert not os.path.exists(os.path.join(prompt_dir, "v3.jinja"))
+
+    @pytest.mark.asyncio
+    async def test_save_existing_prompt_same_content_preserves_ctime(
+        self, temp_dir: str, sample_prompt_data: Dict[str, Dict]
+    ):
+        """Saving unchanged content should leave version files intact while updating metadata."""
+        self.create_sample_files(temp_dir, sample_prompt_data)
+        storage = _FilePromptStorage(temp_dir)
 
         prompt_dir = os.path.join(temp_dir, "prompt1")
-        with open(os.path.join(prompt_dir, "metadata.json"), "r") as f:
-            metadata = json.load(f)
-        assert metadata["defaultVersionId"] == "v1"
+        v1_path = os.path.join(prompt_dir, "v1.jinja")
+        v2_path = os.path.join(prompt_dir, "v2.jinja")
+        original_ctimes = {
+            "v1": os.path.getctime(v1_path),
+            "v2": os.path.getctime(v2_path),
+        }
 
-        with open(os.path.join(prompt_dir, "v1.jinja"), "r") as f:
-            assert f.read() == "Updated {name}"
-        with open(os.path.join(prompt_dir, "v3.jinja"), "r") as f:
-            assert f.read() == "New version"
+        updated_prompt = BaseUntypedPrompt(
+            versions=sample_prompt_data["prompt1"]["versions"],
+            default_version_id="v2",  # flip default to ensure metadata updates
+            id="prompt1",
+        )
+
+        result = storage.save(updated_prompt)
+        assert result is False
+
+        assert os.path.getctime(v1_path) == pytest.approx(original_ctimes["v1"])
+        assert os.path.getctime(v2_path) == pytest.approx(original_ctimes["v2"])
+
+        stored_prompt = storage.get("prompt1")
+        assert stored_prompt.get_default_version_id() == "v2"
+        assert stored_prompt.get_version_creation_time("v1") == pytest.approx(
+            original_ctimes["v1"]
+        )
+        assert stored_prompt.get_version_creation_time("v2") == pytest.approx(
+            original_ctimes["v2"]
+        )
 
     @pytest.mark.asyncio
     async def test_get_returns_existing_prompt(
@@ -897,10 +928,10 @@ class TestFilePromptStorage:
         assert default_id == "v2"
 
     @pytest.mark.asyncio
-    async def test_storage_backed_prompt_created_at_matches_default_version(
+    async def test_storage_backed_prompt_version_creation_time_matches_file(
         self, temp_dir: str
     ):
-        """created_at returns the creation time of the default version file."""
+        """get_version_creation_time returns the creation time of the version file."""
         from pixie.prompts.storage import initialize_prompt_storage, StorageBackedPrompt
 
         write_prompt_folder(
@@ -916,7 +947,7 @@ class TestFilePromptStorage:
         default_path = os.path.join(temp_dir, "created_at_test", "v1.jinja")
         prompt = StorageBackedPrompt(id="created_at_test")
 
-        created_at = prompt.created_at
+        created_at = prompt.get_version_creation_time("v1")
         assert created_at == pytest.approx(os.path.getctime(default_path))
 
     @pytest.mark.asyncio
@@ -945,7 +976,9 @@ class TestFilePromptStorage:
 
         assert prompt.get_default_version_id() == "v2"
         assert prompt.get_versions() == {"v1": "one", "v2": "two"}
-        assert prompt.created_at == pytest.approx(os.path.getctime(v2_path))
+        assert prompt.get_version_creation_time("v2") == pytest.approx(
+            os.path.getctime(v2_path)
+        )
 
     @pytest.mark.asyncio
     async def test_storage_backed_prompt_append_version(self, temp_dir: str):
@@ -986,6 +1019,38 @@ class TestFilePromptStorage:
         assert "v2" in stored_versions
         assert stored_versions["v2"] == "Hi {name}"
         assert stored_prompt.get_default_version_id() == "v2"
+
+    @pytest.mark.asyncio
+    async def test_storage_backed_prompt_append_version_preserves_existing_ctime(
+        self, temp_dir: str
+    ):
+        """Appending a version keeps existing file ctime and records the new one."""
+        from pixie.prompts.storage import initialize_prompt_storage, StorageBackedPrompt
+
+        write_prompt_folder(
+            temp_dir,
+            "append_ctime_test",
+            versions={"v1": "Hello {name}"},
+            default_version_id="v1",
+            variables_schema={"type": "object", "properties": {}},
+        )
+
+        initialize_prompt_storage(temp_dir)
+
+        prompt = StorageBackedPrompt(id="append_ctime_test")
+
+        v1_path = os.path.join(temp_dir, "append_ctime_test", "v1.jinja")
+        original_ctime = os.path.getctime(v1_path)
+
+        time.sleep(0.02)
+        prompt.append_version(version_id="v2", content="Hi {name}")
+
+        v1_ctime_after = prompt.get_version_creation_time("v1")
+        v2_ctime = prompt.get_version_creation_time("v2")
+        v2_path = os.path.join(temp_dir, "append_ctime_test", "v2.jinja")
+
+        assert v1_ctime_after == pytest.approx(original_ctime)
+        assert v2_ctime == pytest.approx(os.path.getctime(v2_path))
 
     @pytest.mark.asyncio
     async def test_storage_backed_prompt_append_version_creates_new_prompt(

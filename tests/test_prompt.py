@@ -905,7 +905,7 @@ class TestFilePromptStorage:
     """Tests for the FilePromptStorage class."""
 
     async def test_save_existing_prompt(self):
-        """Test saving an existing prompt updates its data."""
+        """Updating existing version content should raise and leave file unchanged."""
         with tempfile.TemporaryDirectory() as temp_dir:
             storage = _FilePromptStorage(directory=temp_dir)
 
@@ -920,14 +920,15 @@ class TestFilePromptStorage:
                 id=prompt.id, versions={"v1": "Updated version"}
             )
 
-            is_new = storage.save(updated_prompt)  # Use await for async call
-
-            assert not is_new
+            with pytest.raises(
+                ValueError, match="already exists with different content"
+            ):
+                storage.save(updated_prompt)
 
             # Verify the file content
             prompt_dir = os.path.join(temp_dir, prompt.id)
             with open(os.path.join(prompt_dir, "v1.jinja"), "r") as f:
-                assert f.read() == "Updated version"
+                assert f.read() == "Initial version"
 
 
 class TestVariablesDefinitionToSchema:

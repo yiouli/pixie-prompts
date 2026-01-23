@@ -57,11 +57,34 @@ class _BasePromptMetadata(TypedDict):
     variablesSchema: NotRequired[Dict[str, Any]]
 
 
+class BaseUntypedPromptWithCreationTime(BaseUntypedPrompt):
+
+    def __init__(
+        self,
+        *,
+        id: str,
+        versions: dict[str, str],
+        default_version_id: str,
+        variables_schema: dict[str, Any] | None = None,
+        version_creation_times: dict[str, float],
+    ) -> None:
+        super().__init__(
+            id=id,
+            versions=versions,
+            default_version_id=default_version_id,
+            variables_schema=variables_schema,
+        )
+        self._version_creation_times = version_creation_times
+
+    def get_version_creation_time(self, version_id: str) -> float:
+        return self._version_creation_times[version_id]
+
+
 class _FilePromptStorage(PromptStorage):
 
     def __init__(self, directory: str, *, raise_on_error: bool = True) -> None:
         self._directory = directory
-        self._prompts: Dict[str, BaseUntypedPrompt] = {}
+        self._prompts: Dict[str, BaseUntypedPromptWithCreationTime] = {}
         self._load_failures: list[_PromptLoadFailure] = []
         self.load(raise_on_error=raise_on_error)
 
@@ -116,12 +139,12 @@ class _FilePromptStorage(PromptStorage):
                         f"Default version '{default_version_id}' not found for prompt '{entry}'."
                     )
 
-                prompt = BaseUntypedPrompt(
+                prompt = BaseUntypedPromptWithCreationTime(
                     id=entry,
                     versions=versions,
                     default_version_id=default_version_id,
                     variables_schema=variables_schema,
-                    created_at=version_creation_times.get(default_version_id),
+                    version_creation_times=version_creation_times,
                 )
                 self._prompts[entry] = prompt
                 logger.debug(
@@ -162,6 +185,26 @@ class _FilePromptStorage(PromptStorage):
         prompt_dir = os.path.join(self._directory, prompt_id)
         os.makedirs(prompt_dir, exist_ok=True)
 
+        versions = prompt.get_versions()
+        version_ids = set(versions.keys())
+        existing_versions = {
+            os.path.splitext(filename)[0]
+            for filename in os.listdir(prompt_dir)
+            if filename.endswith(VERSION_FILE_EXTENSION)
+        }
+
+        # Validate that we are not overwriting existing content with new data
+        for version_id in version_ids & existing_versions:
+            version_path = os.path.join(
+                prompt_dir, f"{version_id}{VERSION_FILE_EXTENSION}"
+            )
+            with open(version_path, "r") as vf:
+                existing_content = vf.read()
+            if existing_content != versions[version_id]:
+                raise ValueError(
+                    f"Version '{version_id}' already exists with different content."
+                )
+
         metadata: _BasePromptMetadata = {
             "defaultVersionId": prompt.get_default_version_id(),
             "variablesSchema": prompt.get_variables_schema(),
@@ -170,17 +213,13 @@ class _FilePromptStorage(PromptStorage):
         with open(metadata_path, "w") as f:
             json.dump(metadata, f, indent=2)
 
-        existing_versions = {
-            os.path.splitext(filename)[0]
-            for filename in os.listdir(prompt_dir)
-            if filename.endswith("{VERSION_FILE_EXTENSION}")
-        }
-
-        versions = prompt.get_versions()
+        # Write only new versions; existing identical versions are left untouched
         for version_id, content in versions.items():
             version_path = os.path.join(
                 prompt_dir, f"{version_id}{VERSION_FILE_EXTENSION}"
             )
+            if os.path.exists(version_path):
+                continue
             with open(version_path, "w") as vf:
                 vf.write(content)
 
@@ -190,26 +229,31 @@ class _FilePromptStorage(PromptStorage):
             )
             os.remove(stale_path)
 
-        default_version_id = prompt.get_default_version_id()
-        default_version_path = os.path.join(
-            prompt_dir, f"{default_version_id}{VERSION_FILE_EXTENSION}"
-        )
-        if not os.path.exists(default_version_path):
-            raise FileNotFoundError(
-                f"Default version '{default_version_id}' file is missing for prompt '{prompt_id}'."
+        version_creation_times = {
+            version_id: os.path.getctime(
+                os.path.join(prompt_dir, f"{version_id}{VERSION_FILE_EXTENSION}")
             )
-        prompt._created_at = os.path.getctime(default_version_path)
+            for version_id in versions.keys()
+        }
+
+        stored_prompt = BaseUntypedPromptWithCreationTime(
+            id=prompt_id,
+            versions=versions,
+            default_version_id=prompt.get_default_version_id(),
+            variables_schema=prompt.get_variables_schema(),
+            version_creation_times=version_creation_times,
+        )
 
         try:
-            BasePrompt.update_prompt_registry(prompt)
+            BasePrompt.update_prompt_registry(stored_prompt)
         except KeyError:
             # Prompt not in type prompt registry yet, meaning there's no usage in code
             # thus this untyped prompt would just be stored but not used in code
             pass
-        self._prompts[prompt_id] = prompt
+        self._prompts[prompt_id] = stored_prompt
         return original is None
 
-    def get(self, prompt_id: str) -> BaseUntypedPrompt:
+    def get(self, prompt_id: str) -> BaseUntypedPromptWithCreationTime:
         return self._prompts[prompt_id]
 
 
@@ -248,11 +292,6 @@ class StorageBackedPrompt(Prompt[TPromptVar]):
     def variables_definition(self) -> type[TPromptVar]:
         return self._variables_definition
 
-    @property
-    def created_at(self) -> float | None:
-        prompt = self._get_prompt()
-        return prompt.get_created_at()
-
     def get_variables_schema(self) -> dict[str, Any]:
         return variables_definition_to_schema(self._variables_definition)
 
@@ -289,6 +328,12 @@ class StorageBackedPrompt(Prompt[TPromptVar]):
     def get_versions(self) -> dict[str, str]:
         prompt = self._get_prompt()
         return prompt.get_versions()
+
+    def get_version_creation_time(self, version_id: str) -> float:
+        prompt_with_ctime = _storage_instance.get(self.id)
+        if not prompt_with_ctime:
+            raise KeyError(f"Prompt with id '{self.id}' not found in storage.")
+        return prompt_with_ctime.get_version_creation_time(version_id)
 
     def get_version_count(self) -> int:
         try:
