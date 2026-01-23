@@ -900,7 +900,7 @@ class TestFilePromptStorage:
     async def test_storage_backed_prompt_created_at_matches_default_version(
         self, temp_dir: str
     ):
-        """createdAt returns the creation time of the default version file."""
+        """created_at returns the creation time of the default version file."""
         from pixie.prompts.storage import initialize_prompt_storage, StorageBackedPrompt
 
         write_prompt_folder(
@@ -916,7 +916,7 @@ class TestFilePromptStorage:
         default_path = os.path.join(temp_dir, "created_at_test", "v1.jinja")
         prompt = StorageBackedPrompt(id="created_at_test")
 
-        created_at = prompt.createdAt
+        created_at = prompt.created_at
         assert created_at == pytest.approx(os.path.getctime(default_path))
 
     @pytest.mark.asyncio
@@ -945,7 +945,7 @@ class TestFilePromptStorage:
 
         assert prompt.get_default_version_id() == "v2"
         assert prompt.get_versions() == {"v1": "one", "v2": "two"}
-        assert prompt.createdAt == pytest.approx(os.path.getctime(v2_path))
+        assert prompt.created_at == pytest.approx(os.path.getctime(v2_path))
 
     @pytest.mark.asyncio
     async def test_storage_backed_prompt_append_version(self, temp_dir: str):

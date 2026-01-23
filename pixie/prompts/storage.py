@@ -249,7 +249,7 @@ class StorageBackedPrompt(Prompt[TPromptVar]):
         return self._variables_definition
 
     @property
-    def createdAt(self) -> float | None:
+    def created_at(self) -> float | None:
         prompt = self._get_prompt()
         return prompt.get_created_at()
 
