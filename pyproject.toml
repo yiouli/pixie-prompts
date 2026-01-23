@@ -111,4 +111,4 @@ module = [
 ignore_errors = true
 
 [tool.poetry.scripts]
-pixie-prompts = "pixie.prompts.server:main"
+pp = "pixie.prompts.server:main"
