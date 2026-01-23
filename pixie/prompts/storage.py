@@ -41,22 +41,6 @@ class PromptLoadError(Exception):
         super().__init__(message)
 
 
-class PromptStorage(Protocol):
-
-    def load(self, *, raise_on_error: bool = True) -> list[_PromptLoadFailure]: ...
-
-    def exists(self, prompt_id: str) -> bool: ...
-
-    def save(self, prompt: BaseUntypedPrompt) -> bool: ...
-
-    def get(self, prompt_id: str) -> BaseUntypedPrompt: ...
-
-
-class _BasePromptMetadata(TypedDict):
-    defaultVersionId: str
-    variablesSchema: NotRequired[Dict[str, Any]]
-
-
 class BaseUntypedPromptWithCreationTime(BaseUntypedPrompt):
 
     def __init__(
@@ -78,6 +62,22 @@ class BaseUntypedPromptWithCreationTime(BaseUntypedPrompt):
 
     def get_version_creation_time(self, version_id: str) -> float:
         return self._version_creation_times[version_id]
+
+
+class PromptStorage(Protocol):
+
+    def load(self, *, raise_on_error: bool = True) -> list[_PromptLoadFailure]: ...
+
+    def exists(self, prompt_id: str) -> bool: ...
+
+    def save(self, prompt: BaseUntypedPrompt) -> bool: ...
+
+    def get(self, prompt_id: str) -> BaseUntypedPromptWithCreationTime: ...
+
+
+class _BasePromptMetadata(TypedDict):
+    defaultVersionId: str
+    variablesSchema: NotRequired[Dict[str, Any]]
 
 
 class _FilePromptStorage(PromptStorage):
@@ -330,6 +330,8 @@ class StorageBackedPrompt(Prompt[TPromptVar]):
         return prompt.get_versions()
 
     def get_version_creation_time(self, version_id: str) -> float:
+        if _storage_instance is None:
+            raise RuntimeError("Prompt storage has not been initialized.")
         prompt_with_ctime = _storage_instance.get(self.id)
         if not prompt_with_ctime:
             raise KeyError(f"Prompt with id '{self.id}' not found in storage.")

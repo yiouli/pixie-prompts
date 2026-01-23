@@ -1397,6 +1397,32 @@ class TestFilePromptStorage:
         with pytest.raises(TypeError, match="not compatible"):
             prompt.get_versions()
 
+    @pytest.mark.asyncio
+    async def test_storage_backed_prompt_get_version_creation_time_invalid_version(
+        self, temp_dir: str
+    ):
+        """Test that get_version_creation_time raises KeyError for invalid version_id."""
+        from pixie.prompts.storage import initialize_prompt_storage, StorageBackedPrompt
+
+        write_prompt_folder(
+            temp_dir,
+            "invalid_version_test",
+            versions={"v1": "Version 1"},
+            default_version_id="v1",
+            variables_schema={"type": "object", "properties": {}},
+        )
+
+        initialize_prompt_storage(temp_dir)
+
+        prompt = StorageBackedPrompt(id="invalid_version_test")
+
+        # Valid version should work
+        assert prompt.get_version_creation_time("v1") is not None
+
+        # Invalid version should raise KeyError
+        with pytest.raises(KeyError):
+            prompt.get_version_creation_time("nonexistent_version")
+
 
 class TestInitializePromptStorage:
     """Tests for initialize_prompt_storage function."""
