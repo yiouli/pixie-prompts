@@ -1,10 +1,16 @@
+from contextlib import asynccontextmanager
+import os
+import re
 import sys
 import importlib.util
 from pathlib import Path
+from fastapi import FastAPI
 from watchdog.events import FileSystemEventHandler, FileSystemEvent
 from watchdog.observers import Observer
 import asyncio
 import logging
+
+from pixie.prompts.storage import initialize_prompt_storage
 
 logger = logging.getLogger(__name__)
 
@@ -12,7 +18,7 @@ _storage_observer: Observer | None = None  # type: ignore
 _storage_reload_task: asyncio.Task | None = None
 
 
-def discover_and_load_prompts():
+def discover_and_load_modules():
     """Discover and load all Python files that use pixie.prompts.create_prompt, or pixie.create_prompt.
 
     This function recursively searches the current working directory for Python files
@@ -37,15 +43,23 @@ def discover_and_load_prompts():
         ):
             continue
 
+        # Quick check if file imports register_application
+        content = py_file.read_text()
+        if not re.search(r"(?:^|\s)pixie(?=[\s.])", content):
+            continue
+
         # Load the module with a unique name based on path
         relative_path = py_file.relative_to(cwd)
         module_name = str(relative_path.with_suffix("")).replace("/", ".")
         spec = importlib.util.spec_from_file_location(module_name, py_file)
         if spec and spec.loader:
-            module = importlib.util.module_from_spec(spec)
-            sys.modules[module_name] = module
-            spec.loader.exec_module(module)
-            loaded_count += 1
+            try:
+                module = importlib.util.module_from_spec(spec)
+                sys.modules[module_name] = module
+                spec.loader.exec_module(module)
+                loaded_count += 1
+            except Exception as e:
+                logger.error("Failed to load module %s: %s", module_name, e)
 
 
 def _reload_prompt_storage() -> None:
@@ -285,3 +299,22 @@ async def stop_storage_watcher() -> None:
         _storage_observer.stop()
         await asyncio.to_thread(_storage_observer.join, 5.0)
         _storage_observer = None
+
+
+def init_prompt_storage():
+
+    storage_directory = os.getenv("PIXIE_PROMPT_STORAGE_DIR", ".pixie/prompts")
+    initialize_prompt_storage(storage_directory)
+
+    @asynccontextmanager
+    async def lifespan(app: FastAPI):
+        try:
+            nonlocal storage_directory
+            storage_path = Path(storage_directory)
+            watch_interval = float(os.getenv("PIXIE_PROMPT_WATCH_INTERVAL", "1.0"))
+            await start_storage_watcher(storage_path, watch_interval)
+            yield
+        finally:
+            await stop_storage_watcher()
+
+    return lifespan

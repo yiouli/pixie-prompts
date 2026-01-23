@@ -1,11 +1,9 @@
 """FastAPI server for SDK."""
 
 import argparse
-from contextlib import asynccontextmanager
 import os
 import colorlog
 import logging
-from pathlib import Path
 from urllib.parse import quote
 
 import dotenv
@@ -15,12 +13,10 @@ from strawberry.fastapi import GraphQLRouter
 import uvicorn
 
 from pixie.prompts.file_watcher import (
-    discover_and_load_prompts,
-    start_storage_watcher,
-    stop_storage_watcher,
+    discover_and_load_modules,
+    init_prompt_storage,
 )
 from pixie.prompts.graphql import schema
-from pixie.prompts.storage import initialize_prompt_storage
 
 
 logger = logging.getLogger(__name__)
@@ -91,22 +87,10 @@ def create_app() -> FastAPI:
     setup_logging(_logging_mode)
 
     # Discover and load applications on every app creation (including reloads)
-    discover_and_load_prompts()
+    discover_and_load_modules()
 
     dotenv.load_dotenv(os.getcwd() + "/.env")
-    storage_directory = os.getenv("PIXIE_PROMPT_STORAGE_DIR", ".pixie/prompts")
-    initialize_prompt_storage(storage_directory)
-
-    @asynccontextmanager
-    async def lifespan(app: FastAPI):
-        try:
-            nonlocal storage_directory
-            storage_path = Path(storage_directory)
-            watch_interval = float(os.getenv("PIXIE_PROMPT_WATCH_INTERVAL", "1.0"))
-            await start_storage_watcher(storage_path, watch_interval)
-            yield
-        finally:
-            await stop_storage_watcher()
+    lifespan = init_prompt_storage()
 
     app = FastAPI(
         title="Pixie Prompts Dev Server",
