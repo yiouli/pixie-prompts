@@ -4,7 +4,7 @@ packages = [
     { include = "pixie" },
 ]
 
-version = "0.0.0"  # Managed by setuptools-scm
+version = "0.1.2"
 description = "Code-first, type-safe prompt management"
 authors = ["Yiou Li <yol@gopixie.ai>"]
 license = "MIT"
