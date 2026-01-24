@@ -28,9 +28,10 @@ uvicorn = {version = ">=0.40.0", optional = true}
 colorlog = {version = ">=6.10.1", optional = true}
 dotenv = {version = ">=0.9.9", optional = true}
 watchdog = {version = ">=6.0.0", optional = true}
+pydantic-ai-slim = {version = ">=1.39.0", optional = true}
 
 [tool.poetry.extras]
-server = ["fastapi", "strawberry-graphql", "uvicorn", "colorlog", "dotenv", "watchdog"]
+server = ["fastapi", "strawberry-graphql", "uvicorn", "colorlog", "dotenv", "watchdog", "pydantic-ai-slim"]
 
 [tool.poetry.group.dev.dependencies]
 pytest = ">=7.4,<9.0"

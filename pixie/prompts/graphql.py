@@ -1,14 +1,21 @@
 """GraphQL schema for SDK server."""
 
+from datetime import datetime
 import logging
-from typing import Optional
+from typing import Any, Optional, cast
 
 from graphql import GraphQLError
+from pydantic_ai import ModelSettings
+from pydantic_ai.direct import model_request
 import strawberry
 from strawberry.scalars import JSON
 
 from pixie.prompts.prompt import variables_definition_to_schema
 from pixie.prompts.prompt_management import get_prompt, list_prompts
+from pixie.prompts.utils import (
+    assemble_model_request_parameters,
+    openai_messages_to_pydantic_ai_messages,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -60,6 +67,25 @@ class Prompt:
     """default version id can only be None if versions is empty"""
     description: Optional[str] = None
     module: Optional[str] = None
+
+
+@strawberry.type
+class ToolCall:
+    """Tool call information."""
+
+    name: str
+    args: JSON
+    tool_call_id: strawberry.ID
+
+
+@strawberry.type
+class LlmCallResult:
+
+    output: JSON | None
+    tool_calls: list[ToolCall] | None
+    usage: JSON
+    cost: float
+    timestamp: datetime
 
 
 @strawberry.type
@@ -146,6 +172,66 @@ class Query:
 @strawberry.type
 class Mutation:
     """GraphQL mutations."""
+
+    @strawberry.mutation
+    async def call_llm(
+        self,
+        model: str,
+        input_messages: list[JSON],
+        output_schema: Optional[JSON] = None,
+        tools: Optional[list[JSON]] = None,
+        model_parameters: Optional[JSON] = None,
+    ) -> LlmCallResult:
+        """Call LLM with the given inputs.
+
+        Args:
+            model: The model name to use (e.g., "openai:gpt-4").
+            input_messages: List of messages as JSON objects in openai format.
+            output_schema: Optional output schema.
+            tools: Optional tools configuration (not yet implemented).
+            model_parameters: Optional model parameters.
+
+        Returns:
+            LLM call result
+
+        Raises:
+            GraphQLError: If the LLM call fails.
+        """
+        try:
+            response = await model_request(
+                model=model,
+                messages=openai_messages_to_pydantic_ai_messages(
+                    cast(list[dict[str, Any]], input_messages)
+                ),
+                model_settings=cast(ModelSettings | None, model_parameters),
+                model_request_parameters=assemble_model_request_parameters(
+                    cast(dict[str, Any] | None, output_schema),
+                    cast(list[dict[str, Any]] | None, tools),
+                    strict=True,
+                    allow_text_output=False,
+                ),
+            )
+            return LlmCallResult(
+                output=JSON(response.text),
+                tool_calls=(
+                    [
+                        ToolCall(
+                            name=tc.tool_name,
+                            args=JSON(tc.args_as_dict()),
+                            tool_call_id=strawberry.ID(tc.tool_call_id),
+                        )
+                        for tc in response.tool_calls
+                    ]
+                    if response.tool_calls
+                    else None
+                ),
+                usage=JSON(response.usage.details),
+                cost=float(response.cost().total_price),
+                timestamp=response.timestamp,
+            )
+        except Exception as e:
+            logger.error("Error running LLM: %s", str(e))
+            raise GraphQLError(f"Failed to run LLM: {str(e)}") from e
 
     @strawberry.mutation
     async def add_prompt_version(
