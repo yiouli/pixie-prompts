@@ -1,5 +1,6 @@
 """Tests for utils module - conversion between OpenAI and Pydantic AI message formats."""
 
+import base64
 import json
 
 import pytest
@@ -16,6 +17,10 @@ from pydantic_ai.messages import (
     RetryPromptPart,
     ThinkingPart,
     ImageUrl,
+    AudioUrl,
+    VideoUrl,
+    DocumentUrl,
+    BinaryContent,
 )
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.tools import ToolDefinition
@@ -287,8 +292,10 @@ class TestOpenAIToPydanticAI:
         assert isinstance(result[0].parts[0], TextPart)
         assert result[0].parts[0].content == ""
 
-    def test_unsupported_multimedia_raises_error(self):
-        """Test that multimedia content raises NotImplementedError."""
+    # ===== Multimedia content tests (OpenAI -> Pydantic AI) =====
+
+    def test_user_message_with_image_url(self):
+        """Test converting a user message with an image URL."""
         openai_messages = [
             {
                 "role": "user",
@@ -302,10 +309,188 @@ class TestOpenAIToPydanticAI:
             }
         ]
 
-        with pytest.raises(
-            NotImplementedError, match="[Mm]ulti-?media|[Ii]mage|not supported"
-        ):
-            openai_messages_to_pydantic_ai_messages(openai_messages)
+        result = openai_messages_to_pydantic_ai_messages(openai_messages)
+
+        assert len(result) == 1
+        assert isinstance(result[0], ModelRequest)
+        assert len(result[0].parts) == 1
+        part = result[0].parts[0]
+        assert isinstance(part, UserPromptPart)
+        # Content should be a sequence with text and ImageUrl
+        assert isinstance(part.content, list)
+        assert len(part.content) == 2
+        assert part.content[0] == "What's in this image?"
+        assert isinstance(part.content[1], ImageUrl)
+        assert part.content[1].url == "https://example.com/image.png"
+
+    def test_user_message_with_image_url_and_detail(self):
+        """Test converting a user message with image URL that has detail level."""
+        openai_messages = [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "Describe this image in detail."},
+                    {
+                        "type": "image_url",
+                        "image_url": {
+                            "url": "https://example.com/highres.jpg",
+                            "detail": "high",
+                        },
+                    },
+                ],
+            }
+        ]
+
+        result = openai_messages_to_pydantic_ai_messages(openai_messages)
+
+        assert len(result) == 1
+        part = result[0].parts[0]
+        assert isinstance(part, UserPromptPart)
+        assert len(part.content) == 2
+        image_content = part.content[1]
+        assert isinstance(image_content, ImageUrl)
+        assert image_content.url == "https://example.com/highres.jpg"
+        # Detail should be in vendor_metadata
+        assert image_content.vendor_metadata == {"detail": "high"}
+
+    def test_user_message_with_base64_image(self):
+        """Test converting a user message with a base64 encoded image."""
+        # Small 1x1 red PNG
+        image_data = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
+        openai_messages = [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "What color is this pixel?"},
+                    {
+                        "type": "image_url",
+                        "image_url": {
+                            "url": f"data:image/png;base64,{image_data}",
+                        },
+                    },
+                ],
+            }
+        ]
+
+        result = openai_messages_to_pydantic_ai_messages(openai_messages)
+
+        assert len(result) == 1
+        part = result[0].parts[0]
+        assert isinstance(part, UserPromptPart)
+        assert len(part.content) == 2
+        binary_content = part.content[1]
+        assert isinstance(binary_content, BinaryContent)
+        assert binary_content.media_type == "image/png"
+
+    def test_user_message_with_multiple_images(self):
+        """Test converting a user message with multiple images."""
+        openai_messages = [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "Compare these two images:"},
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": "https://example.com/image1.png"},
+                    },
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": "https://example.com/image2.jpg"},
+                    },
+                ],
+            }
+        ]
+
+        result = openai_messages_to_pydantic_ai_messages(openai_messages)
+
+        assert len(result) == 1
+        part = result[0].parts[0]
+        assert isinstance(part, UserPromptPart)
+        assert len(part.content) == 3
+        assert part.content[0] == "Compare these two images:"
+        assert isinstance(part.content[1], ImageUrl)
+        assert isinstance(part.content[2], ImageUrl)
+        assert part.content[1].url == "https://example.com/image1.png"
+        assert part.content[2].url == "https://example.com/image2.jpg"
+
+    def test_user_message_with_audio_input(self):
+        """Test converting a user message with audio input."""
+        # Base64 audio data (minimal MP3 header for testing)
+        audio_data = base64.b64encode(b"\xff\xfb\x90\x00" + b"\x00" * 100).decode()
+        openai_messages = [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "Transcribe this audio:"},
+                    {
+                        "type": "input_audio",
+                        "input_audio": {
+                            "data": audio_data,
+                            "format": "mp3",
+                        },
+                    },
+                ],
+            }
+        ]
+
+        result = openai_messages_to_pydantic_ai_messages(openai_messages)
+
+        assert len(result) == 1
+        part = result[0].parts[0]
+        assert isinstance(part, UserPromptPart)
+        assert len(part.content) == 2
+        assert part.content[0] == "Transcribe this audio:"
+        audio_content = part.content[1]
+        assert isinstance(audio_content, BinaryContent)
+        assert audio_content.media_type == "audio/mpeg"
+
+    def test_user_message_text_only_in_content_array(self):
+        """Test user message with content array containing only text parts."""
+        openai_messages = [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "First part."},
+                    {"type": "text", "text": "Second part."},
+                ],
+            }
+        ]
+
+        result = openai_messages_to_pydantic_ai_messages(openai_messages)
+
+        assert len(result) == 1
+        part = result[0].parts[0]
+        assert isinstance(part, UserPromptPart)
+        # Should have text content (joined or as list)
+        if isinstance(part.content, str):
+            assert "First part" in part.content
+            assert "Second part" in part.content
+        else:
+            assert "First part." in part.content
+            assert "Second part." in part.content
+
+    def test_user_message_image_without_text(self):
+        """Test user message with only an image (no text)."""
+        openai_messages = [
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": "https://example.com/standalone.png"},
+                    },
+                ],
+            }
+        ]
+
+        result = openai_messages_to_pydantic_ai_messages(openai_messages)
+
+        assert len(result) == 1
+        part = result[0].parts[0]
+        assert isinstance(part, UserPromptPart)
+        assert isinstance(part.content, list)
+        assert len(part.content) == 1
+        assert isinstance(part.content[0], ImageUrl)
 
     def test_function_call_deprecated_format(self):
         """Test converting deprecated function_call format (pre-tool_calls)."""
@@ -655,8 +840,10 @@ class TestPydanticAIToOpenAI:
         assert result[0]["tool_call_id"] == "call_1"
         assert result[1]["tool_call_id"] == "call_2"
 
-    def test_unsupported_multimedia_raises_error(self):
-        """Test that multimedia content in UserPromptPart raises NotImplementedError."""
+    # ===== Multimedia content tests (Pydantic AI -> OpenAI) =====
+
+    def test_user_prompt_with_image_url(self):
+        """Test converting UserPromptPart with ImageUrl to OpenAI format."""
         pydantic_messages: list[ModelMessage] = [
             ModelRequest(
                 parts=[
@@ -670,8 +857,194 @@ class TestPydanticAIToOpenAI:
             )
         ]
 
-        with pytest.raises(NotImplementedError, match="[Mm]ulti-?media|not supported"):
-            pydantic_ai_messages_to_openai_messages(pydantic_messages)
+        result = pydantic_ai_messages_to_openai_messages(pydantic_messages)
+
+        assert len(result) == 1
+        assert result[0]["role"] == "user"
+        content = result[0]["content"]
+        assert isinstance(content, list)
+        assert len(content) == 2
+        assert content[0] == {"type": "text", "text": "What's in this image?"}
+        assert content[1]["type"] == "image_url"
+        assert content[1]["image_url"]["url"] == "https://example.com/image.png"
+
+    def test_user_prompt_with_image_url_and_detail(self):
+        """Test converting ImageUrl with vendor_metadata (detail) to OpenAI format."""
+        pydantic_messages: list[ModelMessage] = [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content=[
+                            "Describe in detail.",
+                            ImageUrl(
+                                url="https://example.com/highres.jpg",
+                                vendor_metadata={"detail": "high"},
+                            ),
+                        ]
+                    )
+                ]
+            )
+        ]
+
+        result = pydantic_ai_messages_to_openai_messages(pydantic_messages)
+
+        assert len(result) == 1
+        content = result[0]["content"]
+        assert len(content) == 2
+        image_part = content[1]
+        assert image_part["type"] == "image_url"
+        assert image_part["image_url"]["url"] == "https://example.com/highres.jpg"
+        assert image_part["image_url"]["detail"] == "high"
+
+    def test_user_prompt_with_multiple_images(self):
+        """Test converting UserPromptPart with multiple images."""
+        pydantic_messages: list[ModelMessage] = [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content=[
+                            "Compare these:",
+                            ImageUrl(url="https://example.com/img1.png"),
+                            ImageUrl(url="https://example.com/img2.jpg"),
+                        ]
+                    )
+                ]
+            )
+        ]
+
+        result = pydantic_ai_messages_to_openai_messages(pydantic_messages)
+
+        assert len(result) == 1
+        content = result[0]["content"]
+        assert len(content) == 3
+        assert content[0] == {"type": "text", "text": "Compare these:"}
+        assert content[1]["type"] == "image_url"
+        assert content[2]["type"] == "image_url"
+
+    def test_user_prompt_with_binary_image(self):
+        """Test converting UserPromptPart with BinaryContent image."""
+        image_bytes = b"\x89PNG\r\n\x1a\n" + b"\x00" * 100  # Minimal PNG-like data
+        pydantic_messages: list[ModelMessage] = [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content=[
+                            "What is this?",
+                            BinaryContent(data=image_bytes, media_type="image/png"),
+                        ]
+                    )
+                ]
+            )
+        ]
+
+        result = pydantic_ai_messages_to_openai_messages(pydantic_messages)
+
+        assert len(result) == 1
+        content = result[0]["content"]
+        assert len(content) == 2
+        image_part = content[1]
+        assert image_part["type"] == "image_url"
+        # Should be a data URI
+        assert image_part["image_url"]["url"].startswith("data:image/png;base64,")
+
+    def test_user_prompt_with_audio_binary(self):
+        """Test converting UserPromptPart with BinaryContent audio."""
+        audio_bytes = b"\xff\xfb\x90\x00" + b"\x00" * 100  # Minimal MP3-like data
+        pydantic_messages: list[ModelMessage] = [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content=[
+                            "Transcribe this:",
+                            BinaryContent(data=audio_bytes, media_type="audio/mpeg"),
+                        ]
+                    )
+                ]
+            )
+        ]
+
+        result = pydantic_ai_messages_to_openai_messages(pydantic_messages)
+
+        assert len(result) == 1
+        content = result[0]["content"]
+        assert len(content) == 2
+        audio_part = content[1]
+        assert audio_part["type"] == "input_audio"
+        assert "data" in audio_part["input_audio"]
+        assert audio_part["input_audio"]["format"] == "mp3"
+
+    def test_user_prompt_with_audio_url(self):
+        """Test converting UserPromptPart with AudioUrl."""
+        pydantic_messages: list[ModelMessage] = [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content=[
+                            "What is being said?",
+                            AudioUrl(url="https://example.com/audio.mp3"),
+                        ]
+                    )
+                ]
+            )
+        ]
+
+        result = pydantic_ai_messages_to_openai_messages(pydantic_messages)
+
+        assert len(result) == 1
+        content = result[0]["content"]
+        assert len(content) == 2
+        # Audio URL should be converted appropriately
+        audio_part = content[1]
+        # AudioUrl is typically converted to input_audio or a URL reference
+        assert audio_part["type"] in ("input_audio", "audio_url")
+
+    def test_user_prompt_with_document_url(self):
+        """Test converting UserPromptPart with DocumentUrl."""
+        pydantic_messages: list[ModelMessage] = [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content=[
+                            "Summarize this document:",
+                            DocumentUrl(url="https://example.com/doc.pdf"),
+                        ]
+                    )
+                ]
+            )
+        ]
+
+        result = pydantic_ai_messages_to_openai_messages(pydantic_messages)
+
+        assert len(result) == 1
+        content = result[0]["content"]
+        assert len(content) == 2
+        # Document URL should be included
+        doc_part = content[1]
+        assert "url" in str(doc_part) or doc_part.get("type") == "file"
+
+    def test_user_prompt_with_video_url(self):
+        """Test converting UserPromptPart with VideoUrl."""
+        pydantic_messages: list[ModelMessage] = [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content=[
+                            "Describe this video:",
+                            VideoUrl(url="https://example.com/video.mp4"),
+                        ]
+                    )
+                ]
+            )
+        ]
+
+        result = pydantic_ai_messages_to_openai_messages(pydantic_messages)
+
+        assert len(result) == 1
+        content = result[0]["content"]
+        assert len(content) == 2
+        # Video URL should be included in some format
+        video_part = content[1]
+        assert "url" in str(video_part) or video_part.get("type") == "video"
 
     def test_thinking_part_is_excluded(self):
         """Test that ThinkingPart is excluded from OpenAI output (it's internal)."""
@@ -754,6 +1127,87 @@ class TestRoundTrip:
         # Check final response
         assert result[3]["role"] == "assistant"
         assert result[3]["content"] == "It's 15°C in Paris."
+
+    def test_image_url_roundtrip(self):
+        """Test that image URLs survive round-trip conversion."""
+        original = [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "What's in this image?"},
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": "https://example.com/image.png"},
+                    },
+                ],
+            }
+        ]
+
+        pydantic_msgs = openai_messages_to_pydantic_ai_messages(original)
+        result = pydantic_ai_messages_to_openai_messages(pydantic_msgs)
+
+        assert len(result) == 1
+        assert result[0]["role"] == "user"
+        content = result[0]["content"]
+        assert isinstance(content, list)
+        assert len(content) == 2
+        assert content[0]["type"] == "text"
+        assert content[0]["text"] == "What's in this image?"
+        assert content[1]["type"] == "image_url"
+        assert content[1]["image_url"]["url"] == "https://example.com/image.png"
+
+    def test_image_with_detail_roundtrip(self):
+        """Test that image detail level survives round-trip conversion."""
+        original = [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "Analyze this:"},
+                    {
+                        "type": "image_url",
+                        "image_url": {
+                            "url": "https://example.com/highres.jpg",
+                            "detail": "high",
+                        },
+                    },
+                ],
+            }
+        ]
+
+        pydantic_msgs = openai_messages_to_pydantic_ai_messages(original)
+        result = pydantic_ai_messages_to_openai_messages(pydantic_msgs)
+
+        assert len(result) == 1
+        content = result[0]["content"]
+        assert content[1]["image_url"]["detail"] == "high"
+
+    def test_multiple_images_roundtrip(self):
+        """Test that multiple images survive round-trip conversion."""
+        original = [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "Compare:"},
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": "https://example.com/a.png"},
+                    },
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": "https://example.com/b.png"},
+                    },
+                ],
+            }
+        ]
+
+        pydantic_msgs = openai_messages_to_pydantic_ai_messages(original)
+        result = pydantic_ai_messages_to_openai_messages(pydantic_msgs)
+
+        assert len(result) == 1
+        content = result[0]["content"]
+        assert len(content) == 3
+        assert content[1]["image_url"]["url"] == "https://example.com/a.png"
+        assert content[2]["image_url"]["url"] == "https://example.com/b.png"
 
 
 class TestAssembleModelRequestParameters:

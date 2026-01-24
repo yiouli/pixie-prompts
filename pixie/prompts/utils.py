@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+import base64
 import json
-from typing import Any, Literal
+from typing import Any, Literal, Sequence
 
 from pydantic_ai.messages import (
     ModelMessage,
@@ -21,10 +22,208 @@ from pydantic_ai.messages import (
     VideoUrl,
     DocumentUrl,
     BinaryContent,
+    UserContent,
 )
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.output import OutputObjectDefinition
+
+
+# Mapping from OpenAI audio formats to media types
+AUDIO_FORMAT_TO_MEDIA_TYPE = {
+    "mp3": "audio/mpeg",
+    "wav": "audio/wav",
+    "pcm": "audio/pcm",
+    "flac": "audio/flac",
+    "ogg": "audio/ogg",
+    "aac": "audio/aac",
+    "opus": "audio/opus",
+}
+
+# Mapping from media types to OpenAI audio formats
+MEDIA_TYPE_TO_AUDIO_FORMAT = {
+    "audio/mpeg": "mp3",
+    "audio/mp3": "mp3",
+    "audio/wav": "wav",
+    "audio/x-wav": "wav",
+    "audio/wave": "wav",
+    "audio/pcm": "pcm",
+    "audio/flac": "flac",
+    "audio/ogg": "ogg",
+    "audio/aac": "aac",
+    "audio/opus": "opus",
+}
+
+
+def _convert_openai_content_array_to_pydantic(
+    content_array: list[dict[str, Any]],
+) -> list[UserContent]:
+    """Convert OpenAI content array format to Pydantic AI UserContent list.
+
+    Args:
+        content_array: List of content parts in OpenAI format
+
+    Returns:
+        List of Pydantic AI UserContent items (str, ImageUrl, AudioUrl, BinaryContent, etc.)
+    """
+    user_content: list[UserContent] = []
+
+    for part in content_array:
+        part_type = part.get("type")
+
+        if part_type == "text":
+            user_content.append(part.get("text", ""))
+
+        elif part_type == "image_url":
+            image_data = part.get("image_url", {})
+            url = image_data.get("url", "")
+            detail = image_data.get("detail")
+
+            # Check if it's a data URI (base64 encoded)
+            if url.startswith("data:"):
+                binary_content = BinaryContent.from_data_uri(url)
+                if detail:
+                    binary_content.vendor_metadata = {"detail": detail}
+                user_content.append(binary_content)
+            else:
+                # Regular URL
+                vendor_metadata = {"detail": detail} if detail else None
+                user_content.append(ImageUrl(url=url, vendor_metadata=vendor_metadata))
+
+        elif part_type == "input_audio":
+            audio_data = part.get("input_audio", {})
+            data_b64 = audio_data.get("data", "")
+            audio_format = audio_data.get("format", "mp3")
+
+            # Convert base64 to binary
+            audio_bytes = base64.b64decode(data_b64)
+            media_type = AUDIO_FORMAT_TO_MEDIA_TYPE.get(
+                audio_format, f"audio/{audio_format}"
+            )
+
+            user_content.append(BinaryContent(data=audio_bytes, media_type=media_type))
+
+        elif part_type == "file":
+            # File input - convert to DocumentUrl or appropriate type
+            file_data = part.get("file", {})
+            file_id = file_data.get("file_id", "")
+            # OpenAI file references are URLs to their file storage
+            if file_id:
+                user_content.append(DocumentUrl(url=f"openai://file/{file_id}"))
+
+        else:
+            # Unknown type - treat as text if possible
+            if "text" in part:
+                user_content.append(part["text"])
+
+    return user_content
+
+
+def _convert_pydantic_content_to_openai(
+    content: Sequence[UserContent],
+) -> list[dict[str, Any]]:
+    """Convert Pydantic AI UserContent sequence to OpenAI content array format.
+
+    Args:
+        content: Sequence of Pydantic AI UserContent items
+
+    Returns:
+        List of OpenAI content parts
+    """
+    content_array: list[dict[str, Any]] = []
+
+    for item in content:
+        if isinstance(item, str):
+            content_array.append({"type": "text", "text": item})
+
+        elif isinstance(item, ImageUrl):
+            image_url_data: dict[str, Any] = {"url": item.url}
+            # Include detail if present in vendor_metadata
+            if item.vendor_metadata and "detail" in item.vendor_metadata:
+                image_url_data["detail"] = item.vendor_metadata["detail"]
+            content_array.append({"type": "image_url", "image_url": image_url_data})
+
+        elif isinstance(item, BinaryContent):
+            if item.is_image:
+                # Convert binary image to data URI
+                image_url_data: dict[str, Any] = {"url": item.data_uri}
+                if item.vendor_metadata and "detail" in item.vendor_metadata:
+                    image_url_data["detail"] = item.vendor_metadata["detail"]
+                content_array.append({"type": "image_url", "image_url": image_url_data})
+
+            elif item.is_audio:
+                # Convert to OpenAI input_audio format
+                audio_format = MEDIA_TYPE_TO_AUDIO_FORMAT.get(
+                    item.media_type, item.format
+                )
+                content_array.append(
+                    {
+                        "type": "input_audio",
+                        "input_audio": {
+                            "data": item.base64,
+                            "format": audio_format,
+                        },
+                    }
+                )
+
+            elif item.is_video:
+                # Video as data URI (limited support in OpenAI)
+                content_array.append(
+                    {
+                        "type": "video",
+                        "video": {"url": item.data_uri},
+                    }
+                )
+
+            elif item.is_document:
+                # Document as data URI
+                content_array.append(
+                    {
+                        "type": "file",
+                        "file": {"url": item.data_uri},
+                    }
+                )
+
+            else:
+                # Unknown binary type - try as file
+                content_array.append(
+                    {
+                        "type": "file",
+                        "file": {"url": item.data_uri},
+                    }
+                )
+
+        elif isinstance(item, AudioUrl):
+            # Audio URL - OpenAI prefers input_audio with base64 data,
+            # but we can reference the URL
+            content_array.append(
+                {
+                    "type": "audio_url",
+                    "audio_url": {"url": item.url},
+                }
+            )
+
+        elif isinstance(item, VideoUrl):
+            # Video URL
+            content_array.append(
+                {
+                    "type": "video",
+                    "video": {"url": item.url},
+                }
+            )
+
+        elif isinstance(item, DocumentUrl):
+            # Document URL
+            content_array.append(
+                {
+                    "type": "file",
+                    "file": {"url": item.url},
+                }
+            )
+
+        # Skip CachePoint and other non-content types
+
+    return content_array
 
 
 def openai_messages_to_pydantic_ai_messages(
@@ -62,14 +261,16 @@ def openai_messages_to_pydantic_ai_messages(
             result.append(ModelRequest(parts=[SystemPromptPart(content=content or "")]))
 
         elif role == "user":
-            # Check for multimedia content
+            # Check for multimodal content (content array)
             if isinstance(content, list):
-                # Content array indicates multimodal content
-                raise NotImplementedError(
-                    "Multimedia content (images, audio, etc.) is not supported. "
-                    "Only text content is currently supported."
+                user_content = _convert_openai_content_array_to_pydantic(content)
+                result.append(
+                    ModelRequest(parts=[UserPromptPart(content=user_content)])
                 )
-            result.append(ModelRequest(parts=[UserPromptPart(content=content or "")]))
+            else:
+                result.append(
+                    ModelRequest(parts=[UserPromptPart(content=content or "")])
+                )
 
         elif role == "assistant":
             parts: list[TextPart | ToolCallPart] = []
@@ -184,30 +385,13 @@ def pydantic_ai_messages_to_openai_messages(
                     result.append({"role": "system", "content": part.content})
 
                 elif isinstance(part, UserPromptPart):
-                    # Check for multimedia content
+                    # Check for multimodal content
                     if not isinstance(part.content, str):
-                        # Content is a sequence, check for non-text content
-                        for item in part.content:
-                            if isinstance(
-                                item,
-                                (
-                                    ImageUrl,
-                                    AudioUrl,
-                                    VideoUrl,
-                                    DocumentUrl,
-                                    BinaryContent,
-                                ),
-                            ):
-                                raise NotImplementedError(
-                                    "Multimedia content is not supported. "
-                                    "Only text content is currently supported."
-                                )
-                        # If we get here, all items should be strings - join them
-                        text_content = " ".join(
-                            item if isinstance(item, str) else str(item)
-                            for item in part.content
+                        # Content is a sequence - convert to OpenAI content array
+                        content_array = _convert_pydantic_content_to_openai(
+                            part.content
                         )
-                        result.append({"role": "user", "content": text_content})
+                        result.append({"role": "user", "content": content_array})
                     else:
                         result.append({"role": "user", "content": part.content})
 
