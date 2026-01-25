@@ -42,6 +42,7 @@ simple_prompt = create_prompt('simple_prompt')
 
 Your prompt would automatically appear in the web UI after your code is saved.
 
+
 ## Manage Prompt
 
 You can create new version(s) of a prompt in the web UI.
@@ -50,7 +51,8 @@ Once saved from web UI, it will be assigned a new version id, and the content wo
 
 > Note: it's recommended to only edit your prompts via the web UI to get type-hint and validation.
 
-## Type-hint and Validation on Variables
+
+## Define Variables
 
 For prompt that has variable(s) in it, define a class extending `pixie.prompts.Variables` (which extends `pydantic.BaseModel`. Then use the class type when registering your prompt.
 
@@ -69,6 +71,30 @@ typed_prompt = create_prompt('typed_prompt', Person)
 Other than using dict, you can define your variable class in anyway that's permissible in Pydantic. I.e. you can define your field as basic types such as `str`, `int`, `bool`, you can have a `list` of permissible items, you can use `Union` type, and you can have nested `Variable` field.
 
 The web UI will parse your variable definitions and use it to decide input fields, type-hints and validations.
+
+
+## Use Prompt
+
+Compile your prompt into string with the `compile` function on the prompt object. Pass in the Variables object (if defined) for your prompt as argument.
+```python
+# demo.py
+
+from pixie.prompts import Variables, create_prompt
+
+simple_prompt = create_prompt('simple_prompt')
+
+class Person(Variables):
+    name: str
+    age: int
+
+# Create a prompt with variables
+typed_prompt = create_prompt('typed_prompt', Person)
+
+simple_prompt_str = simple_prompt.compile()
+typed_prompt_str = typed_prompt.compile(Person(name="Jane", age=30))
+
+```
+
 
 
 Check out more [examples](https://github.com/yiouli/pixie-prompts-examples/blob/main/examples/prompts.py).
