@@ -4,11 +4,15 @@ import argparse
 import os
 import colorlog
 import logging
-from urllib.parse import quote
+import webbrowser
+import threading
+import time
+
 
 import dotenv
-from fastapi import FastAPI
+from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
+import httpx
 from strawberry.fastapi import GraphQLRouter
 import uvicorn
 
@@ -120,13 +124,41 @@ def create_app() -> FastAPI:
 
     app.include_router(graphql_app, prefix="/graphql")
 
-    @app.get("/")
-    async def root():
-        return {
-            "message": "Pixie Prompts Dev Server",
-            "graphiql": "/graphql",
-            "version": "0.1.0",
-        }
+    REMOTE_URL = "https://gopixie.ai"
+
+    @app.api_route("/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH"])
+    async def proxy_all(request: Request, path: str):
+        url = f"{REMOTE_URL}/{path}"
+        if request.url.query:
+            url += f"?{request.url.query}"
+
+        logger.debug("Proxying request to: %s", url)
+
+        async with httpx.AsyncClient(follow_redirects=True, timeout=30.0) as client:
+            response = await client.request(
+                method=request.method,
+                url=url,
+                headers={
+                    k: v
+                    for k, v in request.headers.items()
+                    if k.lower() not in ["host"]
+                },
+                content=await request.body(),
+            )
+
+            # Explicitly remove compression-related headers
+            headers = {
+                k: v
+                for k, v in response.headers.items()
+                if k.lower()
+                not in ["content-encoding", "content-length", "transfer-encoding"]
+            }
+
+            return Response(
+                content=response.content,
+                status_code=response.status_code,
+                headers=headers,
+            )
 
     return app
 
@@ -163,17 +195,24 @@ def start_server(
     logger.info("GraphQL: %s/graphql", server_url)
 
     # Display gopixie.ai web link
-    encoded_url = quote(f"{server_url}/graphql", safe="")
-    pixie_web_url = f"https://gopixie.ai?url={encoded_url}"
+    # encoded_url = quote(f"{server_url}/graphql", safe="")
+    # pixie_web_url = f"https://gopixie.ai?url={encoded_url}"
     logger.info("")
     logger.info("=" * 60)
     logger.info("")
-    logger.info("🎨 Open Pixie Web UI:")
+    logger.info("🎨 Pixie Web UI:")
     logger.info("")
-    logger.info("   %s", pixie_web_url)
+    logger.info("   %s", server_url)
     logger.info("")
     logger.info("=" * 60)
     logger.info("")
+
+    # Open browser after a short delay (in a separate thread)
+    def open_browser():
+        time.sleep(1.5)  # Wait for server to start
+        webbrowser.open(server_url)
+
+    threading.Thread(target=open_browser, daemon=True).start()
 
     uvicorn.run(
         "pixie.prompts.server:create_app",
