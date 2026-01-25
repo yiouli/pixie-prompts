@@ -1,12 +1,15 @@
 """GraphQL schema for SDK server."""
 
 from datetime import datetime
+import json
 import logging
-from typing import Any, Optional, cast
+from typing import Any, Optional, cast, get_args
 
 from graphql import GraphQLError
+import jinja2
 from pydantic_ai import ModelSettings
 from pydantic_ai.direct import model_request
+from pydantic_ai.models import KnownModelName
 import strawberry
 from strawberry.scalars import JSON
 
@@ -15,6 +18,7 @@ from pixie.prompts.prompt_management import get_prompt, list_prompts
 from pixie.prompts.utils import (
     assemble_model_request_parameters,
     openai_messages_to_pydantic_ai_messages,
+    pydantic_ai_messages_to_openai_messages,
 )
 
 logger = logging.getLogger(__name__)
@@ -81,16 +85,27 @@ class ToolCall:
 @strawberry.type
 class LlmCallResult:
 
+    input: JSON
     output: JSON | None
     tool_calls: list[ToolCall] | None
     usage: JSON
     cost: float
     timestamp: datetime
+    reasoning: str | None
 
 
 @strawberry.type
 class Query:
     """GraphQL queries."""
+
+    @strawberry.field
+    async def possible_models(self) -> list[str]:
+        """List possible model names.
+
+        Returns:
+            A list of model names supported by the server.
+        """
+        return list(get_args(KnownModelName.__value__))
 
     @strawberry.field
     async def health_check(self) -> str:
@@ -177,6 +192,9 @@ class Mutation:
     async def call_llm(
         self,
         model: str,
+        prompt_template: str,
+        variables: Optional[JSON],
+        prompt_placeholder: str,
         input_messages: list[JSON],
         output_schema: Optional[JSON] = None,
         tools: Optional[list[JSON]] = None,
@@ -186,7 +204,10 @@ class Mutation:
 
         Args:
             model: The model name to use (e.g., "openai:gpt-4").
-            input_messages: List of messages as JSON objects in openai format.
+            prompt_template: prompt template string.
+            variables: variables for the prompt template.
+            prompt_placeholder: placeholder string in the prompt template to be replaced.
+            input_messages: List of messages as JSON objects in openai format, containing prompt_placeholder in content.
             output_schema: Optional output schema.
             tools: Optional tools configuration (not yet implemented).
             model_parameters: Optional model parameters.
@@ -198,11 +219,35 @@ class Mutation:
             GraphQLError: If the LLM call fails.
         """
         try:
+            template = jinja2.Template(prompt_template)
+            prompt = template.render(**(cast(dict[str, Any], variables) or {}))
+            print(prompt)
+            print(type(prompt))
+            pydantic_messages = openai_messages_to_pydantic_ai_messages(
+                cast(list[dict[str, Any]], input_messages)
+            )
+            for msg in pydantic_messages:
+                for part in msg.parts:
+                    if part.part_kind == "user-prompt":
+                        if isinstance(part.content, str):
+                            part.content = part.content.replace(
+                                prompt_placeholder,
+                                prompt,
+                            )
+                        else:
+                            part.content = [
+                                p.replace(prompt_placeholder, prompt)
+                                for p in part.content
+                                if isinstance(p, str)
+                            ]
+                    elif part.part_kind == "system-prompt":
+                        part.content = part.content.replace(prompt_placeholder, prompt)
+
+            print(pydantic_messages)
+            # Replace the placeholder in input messages
             response = await model_request(
                 model=model,
-                messages=openai_messages_to_pydantic_ai_messages(
-                    cast(list[dict[str, Any]], input_messages)
-                ),
+                messages=pydantic_messages,
                 model_settings=cast(ModelSettings | None, model_parameters),
                 model_request_parameters=assemble_model_request_parameters(
                     cast(dict[str, Any] | None, output_schema),
@@ -212,7 +257,12 @@ class Mutation:
                 ),
             )
             return LlmCallResult(
-                output=JSON(response.text),
+                input=JSON(pydantic_ai_messages_to_openai_messages(pydantic_messages)),
+                output=(
+                    JSON(json.loads(response.text) if output_schema else response.text)
+                    if response.text
+                    else None
+                ),
                 tool_calls=(
                     [
                         ToolCall(
@@ -225,9 +275,16 @@ class Mutation:
                     if response.tool_calls
                     else None
                 ),
-                usage=JSON(response.usage.details),
+                usage=JSON(
+                    {
+                        "input_tokens": response.usage.input_tokens,
+                        "output_tokens": response.usage.output_tokens,
+                        "total_tokens": response.usage.total_tokens,
+                    }
+                ),
                 cost=float(response.cost().total_price),
                 timestamp=response.timestamp,
+                reasoning=response.thinking,
             )
         except Exception as e:
             logger.error("Error running LLM: %s", str(e))
