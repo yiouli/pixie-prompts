@@ -10,7 +10,7 @@ from watchdog.observers import Observer
 import asyncio
 import logging
 
-from pixie.prompts.storage import initialize_prompt_storage
+from pixie.prompts.storage import PromptLoadError, initialize_prompt_storage
 
 logger = logging.getLogger(__name__)
 
@@ -311,7 +311,11 @@ async def stop_storage_watcher() -> None:
 def init_prompt_storage():
 
     storage_directory = os.getenv("PIXIE_PROMPT_STORAGE_DIR", ".pixie/prompts")
-    initialize_prompt_storage(storage_directory)
+    try:
+        initialize_prompt_storage(storage_directory)
+    except PromptLoadError as e:
+        for err in e.failures:
+            logger.error("Prompt load error: %s", err)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
