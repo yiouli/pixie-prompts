@@ -2,10 +2,14 @@
 **Code-first, type-checked prompt management.**
 Manage prompt locally in your codebase, with Jinja rendering, variable type-hint and validations.
 
-[Demo](https://github.com/user-attachments/assets/ca9bd02c-308d-4475-ab88-73a01a4d36f3)
-[Try it live](https://gopixie.ai/?url=https%3A%2F%2Fpixie-prompts-examples.vercel.app%2Fgraphql)
+[**Demo**](https://github.com/user-attachments/assets/aba55aca-1ad3-4f25-97f9-db0f8e67dbe6)
+
+[**Try it live**](https://gopixie.ai/?url=https%3A%2F%2Fpixie-prompts-examples.vercel.app%2Fgraphql)
 
 ## Setup
+
+
+
 
 In your project folder, install **pixie-prompts[server]** Python package:
 ```bash
