@@ -93,7 +93,9 @@ def create_app() -> FastAPI:
     # Discover and load applications on every app creation (including reloads)
     discover_and_load_modules()
 
-    dotenv.load_dotenv(os.getcwd() + "/.env")
+    env_path = os.getcwd() + "/.env"
+
+    dotenv.load_dotenv(env_path)
     lifespan = init_prompt_storage()
 
     app = FastAPI(
@@ -220,6 +222,7 @@ def start_server(
         port=port,
         loop="asyncio",
         reload=reload,
+        reload_includes=[".env"],
         factory=True,
         log_config=None,
     )

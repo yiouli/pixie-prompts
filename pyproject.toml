@@ -4,7 +4,7 @@ packages = [
     { include = "pixie" },
 ]
 
-version = "0.1.6"
+version = "0.1.7"
 description = "Code-first, type-safe prompt management"
 authors = ["Yiou Li <yol@gopixie.ai>"]
 license = "MIT"
@@ -31,9 +31,10 @@ watchdog = {version = ">=6.0.0", optional = true}
 pydantic-ai-slim = {version = ">=1.39.0", optional = true}
 brotli = {version = "^1.2.0", optional = true}
 openai = {version = "^2.15.0", extras = ["server"]}
+watchfiles = {version = "^1.1.1", extras = ["server"]}
 
 [tool.poetry.extras]
-server = ["fastapi", "strawberry-graphql", "uvicorn", "colorlog", "dotenv", "watchdog", "pydantic-ai-slim", "brotli", "openai"]
+server = ["fastapi", "strawberry-graphql", "uvicorn", "colorlog", "dotenv", "watchdog", "pydantic-ai-slim", "brotli", "openai", "watchfiles"]
 
 [tool.poetry.group.dev.dependencies]
 pytest = ">=7.4,<9.0"
