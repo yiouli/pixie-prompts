@@ -111,6 +111,8 @@ class Query:
         Returns:
             A list of model names supported by the server.
         """
+        if is_demo_mode():
+            return ["openai:gpt-4o-mini"]
         return list(get_args(KnownModelName.__value__))
 
     @strawberry.field
