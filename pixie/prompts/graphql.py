@@ -3,6 +3,7 @@
 from datetime import datetime
 import json
 import logging
+import os
 from typing import Any, Optional, cast, get_args
 
 from graphql import GraphQLError
@@ -92,6 +93,11 @@ class LlmCallResult:
     cost: float
     timestamp: datetime
     reasoning: str | None
+
+
+def is_demo_mode() -> bool:
+    is_demo_mode = os.getenv("IS_DEMO_MODE", "0") in ("1", "true", "True")
+    return is_demo_mode
 
 
 @strawberry.type
@@ -219,6 +225,8 @@ class Mutation:
             GraphQLError: If the LLM call fails.
         """
         try:
+            if is_demo_mode():
+                model = "openai:gpt-4o-mini"
             template = jinja2.Template(prompt_template)
             prompt = template.render(**(cast(dict[str, Any], variables) or {}))
             print(prompt)
@@ -243,7 +251,6 @@ class Mutation:
                     elif part.part_kind == "system-prompt":
                         part.content = part.content.replace(prompt_placeholder, prompt)
 
-            print(pydantic_messages)
             # Replace the placeholder in input messages
             response = await model_request(
                 model=model,
@@ -309,6 +316,8 @@ class Mutation:
         Returns:
             The updated BasePrompt object.
         """
+        if is_demo_mode():
+            raise GraphQLError("Modifications are not allowed in demo mode.")
         prompt_with_registration = get_prompt((str(prompt_id)))
         if prompt_with_registration is None:
             raise GraphQLError(f"Prompt with id '{prompt_id}' not found.")
@@ -338,6 +347,8 @@ class Mutation:
         Returns:
             True if the update was successful.
         """
+        if is_demo_mode():
+            raise GraphQLError("Modifications are not allowed in demo mode.")
         prompt_with_registration = get_prompt((str(prompt_id)))
         if prompt_with_registration is None:
             raise GraphQLError(f"Prompt with id '{prompt_id}' not found.")
