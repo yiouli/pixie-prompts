@@ -4,7 +4,7 @@ packages = [
     { include = "pixie" },
 ]
 
-version = "0.1.7"
+version = "0.1.8"
 description = "Code-first, type-safe prompt management"
 authors = ["Yiou Li <yol@gopixie.ai>"]
 license = "MIT"

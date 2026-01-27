@@ -18,6 +18,85 @@ _storage_observer: Observer | None = None  # type: ignore
 _storage_reload_task: asyncio.Task | None = None
 
 
+def _preload_pixie_modules(cwd: Path) -> None:
+    """Pre-load pixie modules from the local source directory.
+
+    This ensures that when dynamically loaded modules import pixie.registry,
+    they get the same module instance as the rest of the application.
+
+    Without this, namespace package collisions can occur when pixie-prompts
+    is installed as a package while pixie-sdk-py is run from source. The
+    dynamic module loading via importlib.util.spec_from_file_location() can
+    create separate module instances, leading to separate _registry dicts.
+
+    Args:
+        cwd: The current working directory to search for pixie modules.
+    """
+    pixie_dir = cwd / "pixie"
+    if not pixie_dir.is_dir():
+        return
+
+    # Find all pixie submodules that exist locally and pre-import them
+    # This ensures they're in sys.modules before any dynamic loading
+    pixie_modules_to_preload = []
+
+    for py_file in pixie_dir.rglob("*.py"):
+        if py_file.name.startswith("_"):
+            continue
+        # Skip if in __pycache__ or similar
+        if "__pycache__" in py_file.parts:
+            continue
+
+        relative_path = py_file.relative_to(cwd)
+        module_name = str(relative_path.with_suffix("")).replace("/", ".")
+        pixie_modules_to_preload.append((module_name, py_file))
+
+    # Sort to ensure parent modules are loaded before children
+    pixie_modules_to_preload.sort(key=lambda x: x[0])
+
+    for module_name, py_file in pixie_modules_to_preload:
+        if module_name in sys.modules:
+            continue
+
+        # Ensure parent packages are in sys.modules
+        parts = module_name.split(".")
+        for i in range(1, len(parts)):
+            parent_name = ".".join(parts[:i])
+            if parent_name not in sys.modules:
+                parent_path = cwd / Path(*parts[:i])
+                init_file = parent_path / "__init__.py"
+                if init_file.exists():
+                    spec = importlib.util.spec_from_file_location(
+                        parent_name, init_file
+                    )
+                    if spec and spec.loader:
+                        module = importlib.util.module_from_spec(spec)
+                        sys.modules[parent_name] = module
+                        try:
+                            spec.loader.exec_module(module)
+                        except Exception:
+                            pass
+                else:
+                    # Create a namespace package
+                    import types
+
+                    ns_module = types.ModuleType(parent_name)
+                    ns_module.__path__ = [str(parent_path)]
+                    sys.modules[parent_name] = ns_module
+
+        # Now load the actual module
+        spec = importlib.util.spec_from_file_location(module_name, py_file)
+        if spec and spec.loader:
+            try:
+                module = importlib.util.module_from_spec(spec)
+                sys.modules[module_name] = module
+                spec.loader.exec_module(module)
+            except Exception:
+                # Don't fail if a module can't be loaded - it might have
+                # dependencies that aren't available yet
+                pass
+
+
 def discover_and_load_modules():
     """Discover and load all Python files that use pixie.prompts.create_prompt, or pixie.create_prompt.
 
@@ -33,6 +112,10 @@ def discover_and_load_modules():
     # Add current directory to Python path if not already there
     if str(cwd) not in sys.path:
         sys.path.insert(0, str(cwd))
+
+    # Pre-load pixie modules from local source to avoid namespace package collisions
+    # This ensures dynamically loaded modules use the same pixie.registry instance
+    _preload_pixie_modules(cwd)
 
     loaded_count = 0
     for py_file in python_files:
@@ -58,6 +141,12 @@ def discover_and_load_modules():
         # Load the module with a unique name based on path
         relative_path = py_file.relative_to(cwd)
         module_name = str(relative_path.with_suffix("")).replace("/", ".")
+
+        # Skip if module was already loaded (e.g., during preload)
+        if module_name in sys.modules:
+            loaded_count += 1
+            continue
+
         spec = importlib.util.spec_from_file_location(module_name, py_file)
         if spec and spec.loader:
             try:

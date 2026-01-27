@@ -466,3 +466,166 @@ async def test_stop_storage_watcher_cancels_task_and_stops_observer(monkeypatch)
     assert observer.join_called_with == (5.0,)
     assert file_watcher._storage_observer is None
     assert file_watcher._storage_reload_task is None
+
+
+def test_preload_pixie_modules_ensures_single_registry_instance(
+    monkeypatch, tmp_path, fresh_sys_path
+):
+    """Test that _preload_pixie_modules prevents namespace package collisions.
+
+    This test simulates the scenario where:
+    1. A local 'pixie' package exists with a registry module
+    2. Multiple user modules import from pixie.registry
+    3. All modules should share the same _registry dict
+
+    Without preloading, dynamic module loading can create separate registry instances.
+    """
+    monkeypatch.chdir(tmp_path)
+
+    # Create a mock pixie package structure
+    pixie_dir = tmp_path / "pixie"
+    pixie_dir.mkdir()
+
+    # Create __init__.py for pixie package
+    (pixie_dir / "__init__.py").write_text("", encoding="utf-8")
+
+    # Create a registry module with a global _registry dict
+    (pixie_dir / "registry.py").write_text(
+        """
+_registry = {}
+
+def register(name):
+    _registry[name] = True
+
+def get_all():
+    return list(_registry.keys())
+""",
+        encoding="utf-8",
+    )
+
+    # Create a subpackage
+    session_dir = pixie_dir / "session"
+    session_dir.mkdir()
+    (session_dir / "__init__.py").write_text("", encoding="utf-8")
+
+    # Create a module in the subpackage that uses registry
+    (session_dir / "server.py").write_text(
+        """
+from pixie.registry import register
+register('session_server')
+""",
+        encoding="utf-8",
+    )
+
+    # Create a user module at root that also uses registry
+    (tmp_path / "demo.py").write_text(
+        """
+import pixie
+from pixie.registry import register
+register('demo')
+""",
+        encoding="utf-8",
+    )
+
+    # Run discover_and_load_modules which should preload pixie modules first
+    file_watcher.discover_and_load_modules()
+
+    # Import the registry to check the results
+    import pixie.registry as reg
+
+    registered = reg.get_all()
+
+    # Both modules should have registered to the SAME registry
+    assert "demo" in registered, f"demo not in registry: {registered}"
+    assert (
+        "session_server" in registered
+    ), f"session_server not in registry: {registered}"
+    assert len(registered) == 2, f"Expected 2 entries, got: {registered}"
+
+    # Cleanup
+    for module_name in list(sys.modules.keys()):
+        if module_name.startswith("pixie") or module_name == "demo":
+            sys.modules.pop(module_name, None)
+
+
+def test_preload_pixie_modules_handles_missing_pixie_dir(
+    monkeypatch, tmp_path, fresh_sys_path
+):
+    """Test that _preload_pixie_modules gracefully handles missing pixie directory."""
+    monkeypatch.chdir(tmp_path)
+
+    # Create a simple module without pixie package
+    (tmp_path / "app.py").write_text(
+        "import builtins\nbuiltins._test_loaded = True\n",
+        encoding="utf-8",
+    )
+
+    # Should not raise even without pixie directory
+    file_watcher._preload_pixie_modules(tmp_path)
+
+    # Verify no pixie modules were loaded
+    pixie_modules = [m for m in sys.modules if m.startswith("pixie.")]
+    # Filter out any pixie.prompts modules that were already loaded
+    local_pixie = [m for m in pixie_modules if "prompts" not in m]
+    assert len(local_pixie) == 0
+
+
+def test_preload_pixie_modules_skips_private_files(
+    monkeypatch, tmp_path, fresh_sys_path
+):
+    """Test that _preload_pixie_modules skips private (underscore-prefixed) files."""
+    monkeypatch.chdir(tmp_path)
+
+    # Create pixie package with private module
+    pixie_dir = tmp_path / "pixie"
+    pixie_dir.mkdir()
+    (pixie_dir / "__init__.py").write_text("", encoding="utf-8")
+    (pixie_dir / "_private.py").write_text(
+        "_private_var = 'should not load'", encoding="utf-8"
+    )
+    (pixie_dir / "public.py").write_text("public_var = 'should load'", encoding="utf-8")
+
+    file_watcher._preload_pixie_modules(tmp_path)
+
+    # Private module should not be loaded
+    assert "pixie._private" not in sys.modules
+    # Public module should be loaded
+    assert "pixie.public" in sys.modules
+
+    # Cleanup
+    for module_name in list(sys.modules.keys()):
+        if module_name.startswith("pixie") and "prompts" not in module_name:
+            sys.modules.pop(module_name, None)
+
+
+def test_discover_and_load_skips_already_preloaded_modules(
+    monkeypatch, tmp_path, fresh_sys_path
+):
+    """Test that discover_and_load_modules doesn't re-load preloaded modules."""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(builtins, "_pixie_load_count", 0, raising=False)
+
+    # Create pixie package
+    pixie_dir = tmp_path / "pixie"
+    pixie_dir.mkdir()
+    (pixie_dir / "__init__.py").write_text("", encoding="utf-8")
+
+    # Create a module that increments counter on load
+    (pixie_dir / "counter.py").write_text(
+        """
+import builtins
+builtins._pixie_load_count = getattr(builtins, '_pixie_load_count', 0) + 1
+""",
+        encoding="utf-8",
+    )
+
+    # Run discover_and_load_modules
+    file_watcher.discover_and_load_modules()
+
+    # Module should only be loaded once (during preload)
+    assert builtins._pixie_load_count == 1  # type: ignore
+
+    # Cleanup
+    for module_name in list(sys.modules.keys()):
+        if module_name.startswith("pixie") and "prompts" not in module_name:
+            sys.modules.pop(module_name, None)
