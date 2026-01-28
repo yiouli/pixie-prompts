@@ -2,7 +2,7 @@ from copy import deepcopy
 from dataclasses import dataclass
 import json
 from types import NoneType
-from typing import Any, Generic, Protocol, Self, TypeVar, cast, overload
+from typing import Any, Callable, Generic, Protocol, Self, TypeVar, cast, overload
 from uuid import uuid4
 
 import jinja2
@@ -32,14 +32,14 @@ def get_prompt_by_id(prompt_id: str) -> "BasePrompt":
 
 
 @dataclass(frozen=True)
-class _CompiledPrompt:
+class CompiledPrompt:
     value: str
     prompt: "BasePrompt | OutdatedPrompt"
     version_id: str
     variables: Variables | None
 
 
-_compiled_prompt_registry: dict[int, _CompiledPrompt] = {}
+_compiled_prompt_registry: dict[int, CompiledPrompt] = {}
 """Registry of all compiled prompts.
 
 This is to keep track of every result string returned by BasePrompt.compile().
@@ -68,7 +68,7 @@ def _find_matching_prompt(obj):
         return None
 
 
-def get_compiled_prompt(text: str) -> _CompiledPrompt | None:
+def get_compiled_prompt(text: str) -> CompiledPrompt | None:
     """Find the compiled prompt metadata for a given compiled prompt string."""
     if not _compiled_prompt_registry:
         return None
@@ -86,13 +86,27 @@ def get_compiled_prompt(text: str) -> _CompiledPrompt | None:
         return None
 
 
+_PromptCompilationListener = Callable[[CompiledPrompt], None]
+_prompt_compilation_listeners: list[_PromptCompilationListener] = []
+
+
+def on_prompt_compilation(
+    listener: Callable[["CompiledPrompt"], None],
+) -> None:
+    """Register a listener that will be called whenever a prompt is compiled.
+
+    The listener will be called with the prompt and the compiled prompt metadata.
+    """
+    _prompt_compilation_listeners.append(listener)
+
+
 def _mark_compiled_prompts_outdated(
     prompt_id: str, outdated_prompt: "OutdatedPrompt"
 ) -> None:
     for key in list(_compiled_prompt_registry.keys()):
         compiled_prompt = _compiled_prompt_registry[key]
         if compiled_prompt.prompt.id == prompt_id:
-            _compiled_prompt_registry[key] = _CompiledPrompt(
+            _compiled_prompt_registry[key] = CompiledPrompt(
                 value=compiled_prompt.value,
                 version_id=compiled_prompt.version_id,
                 variables=compiled_prompt.variables,
@@ -257,12 +271,18 @@ class BasePrompt(BaseUntypedPrompt, Generic[TPromptVar]):
             ret = template.render(**variables.model_dump(mode="json"))
         else:
             ret = template_txt
-        _compiled_prompt_registry[id(ret)] = _CompiledPrompt(
+        compiled = CompiledPrompt(
             value=ret,
             version_id=version_id,
             prompt=self,
             variables=variables,
         )
+        _compiled_prompt_registry[id(compiled)] = compiled
+        for listener in _prompt_compilation_listeners:
+            try:
+                listener(compiled)
+            except Exception:
+                pass
         return ret
 
     def _update(
@@ -355,7 +375,7 @@ class OutdatedPrompt(BasePrompt[TPromptVar]):
         *,
         versions: str | dict[str, str] | None = None,
         default_version_id: str | None = None,
-    ) -> "OutdatedPrompt[TPromptVar]":
+    ) -> "tuple[Self, OutdatedPrompt[TPromptVar]]":
         raise ValueError("Cannot update an outdated prompt.")
 
     def get_default_version_id(self) -> str:
@@ -366,8 +386,8 @@ class OutdatedPrompt(BasePrompt[TPromptVar]):
 
     def compile(
         self,
-        _variables: TPromptVar | None = None,
+        variables: TPromptVar | None = None,
         *,
-        _version_id: str | None = None,
+        version_id: str | None = None,
     ) -> str:
         raise ValueError("This prompt is outdated and can no longer be used.")

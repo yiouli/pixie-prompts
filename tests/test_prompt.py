@@ -13,6 +13,8 @@ from pixie.prompts.prompt import (
     Variables,
     BaseUntypedPrompt,
     OutdatedPrompt,
+    CompiledPrompt,
+    on_prompt_compilation,
     _prompt_registry,  # Import the registry explicitly
     _compiled_prompt_registry,
 )
@@ -1317,3 +1319,121 @@ class TestGetCompiledPrompt:
         assert result is not None
         assert isinstance(result.prompt, OutdatedPrompt)
         assert result.value == "Original"
+
+
+class TestPromptCompilationListeners:
+    """Tests for prompt compilation listeners."""
+
+    def setup_method(self):
+        """Clear listeners before each test."""
+        from pixie.prompts.prompt import _prompt_compilation_listeners
+
+        _prompt_compilation_listeners.clear()
+
+    def teardown_method(self):
+        """Clear listeners after each test."""
+        from pixie.prompts.prompt import _prompt_compilation_listeners
+
+        _prompt_compilation_listeners.clear()
+
+    def test_on_prompt_compilation_registers_listener(self):
+        """Test that on_prompt_compilation adds a listener to the list."""
+        from pixie.prompts.prompt import _prompt_compilation_listeners
+
+        def dummy_listener(compiled: CompiledPrompt):
+            pass
+
+        assert len(_prompt_compilation_listeners) == 0
+        on_prompt_compilation(dummy_listener)
+        assert len(_prompt_compilation_listeners) == 1
+        assert _prompt_compilation_listeners[0] == dummy_listener
+
+    def test_listener_called_on_compile(self):
+        """Test that registered listeners are called when a prompt is compiled."""
+        called_with = []
+
+        def listener(compiled: CompiledPrompt):
+            called_with.append(compiled)
+
+        on_prompt_compilation(listener)
+
+        prompt = BasePrompt(versions="Hello world")
+        result = prompt.compile()
+
+        assert len(called_with) == 1
+        compiled = called_with[0]
+        assert isinstance(compiled, CompiledPrompt)
+        assert compiled.value == result
+        assert compiled.prompt == prompt
+        assert compiled.version_id == DEFAULT_VERSION_ID
+        assert compiled.variables is None
+
+    def test_listener_called_on_compile_with_variables(self):
+        """Test listener is called with correct data when compiling with variables."""
+        called_with = []
+
+        def listener(compiled: CompiledPrompt):
+            called_with.append(compiled)
+
+        on_prompt_compilation(listener)
+
+        prompt = BasePrompt(
+            versions="Hello {{name}}", variables_definition=SampleVariables
+        )
+        variables = SampleVariables(name="Alice", age=30)
+        result = prompt.compile(variables)
+
+        assert len(called_with) == 1
+        compiled = called_with[0]
+        assert compiled.value == result
+        assert compiled.prompt == prompt
+        assert compiled.variables == variables
+
+    def test_multiple_listeners_called(self):
+        """Test that multiple listeners are all called."""
+        calls = []
+
+        def listener1(compiled: CompiledPrompt):
+            calls.append("listener1")
+
+        def listener2(compiled: CompiledPrompt):
+            calls.append("listener2")
+
+        on_prompt_compilation(listener1)
+        on_prompt_compilation(listener2)
+
+        prompt = BasePrompt(versions="Test")
+        prompt.compile()
+
+        assert calls == ["listener1", "listener2"]
+
+    def test_listener_exception_caught(self):
+        """Test that exceptions in listeners are caught and don't prevent compilation."""
+
+        def failing_listener(compiled: CompiledPrompt):
+            raise ValueError("Listener failed")
+
+        on_prompt_compilation(failing_listener)
+
+        prompt = BasePrompt(versions="Test")
+        # Should not raise
+        result = prompt.compile()
+        assert result == "Test"
+
+    def test_listener_exception_does_not_prevent_other_listeners(self):
+        """Test that one listener failing doesn't prevent others from running."""
+        calls = []
+
+        def failing_listener(compiled: CompiledPrompt):
+            raise ValueError("Failed")
+
+        def working_listener(compiled: CompiledPrompt):
+            calls.append("worked")
+
+        on_prompt_compilation(failing_listener)
+        on_prompt_compilation(working_listener)
+
+        prompt = BasePrompt(versions="Test")
+        prompt.compile()
+
+        assert calls == ["worked"]
