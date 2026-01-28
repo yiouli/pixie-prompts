@@ -90,14 +90,18 @@ _PromptCompilationListener = Callable[[CompiledPrompt], None]
 _prompt_compilation_listeners: list[_PromptCompilationListener] = []
 
 
-def on_prompt_compilation(
-    listener: Callable[["CompiledPrompt"], None],
-) -> None:
+def add_prompt_compilation_listener(listener: _PromptCompilationListener) -> None:
     """Register a listener that will be called whenever a prompt is compiled.
 
     The listener will be called with the prompt and the compiled prompt metadata.
     """
     _prompt_compilation_listeners.append(listener)
+
+
+def remove_prompt_compilation_listener(listener: _PromptCompilationListener) -> None:
+    """Unregister a previously registered prompt compilation listener."""
+    if listener in _prompt_compilation_listeners:
+        _prompt_compilation_listeners.remove(listener)
 
 
 def _mark_compiled_prompts_outdated(

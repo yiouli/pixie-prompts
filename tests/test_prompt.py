@@ -14,7 +14,8 @@ from pixie.prompts.prompt import (
     BaseUntypedPrompt,
     OutdatedPrompt,
     CompiledPrompt,
-    on_prompt_compilation,
+    add_prompt_compilation_listener,
+    remove_prompt_compilation_listener,
     _prompt_registry,  # Import the registry explicitly
     _compiled_prompt_registry,
 )
@@ -1336,15 +1337,15 @@ class TestPromptCompilationListeners:
 
         _prompt_compilation_listeners.clear()
 
-    def test_on_prompt_compilation_registers_listener(self):
-        """Test that on_prompt_compilation adds a listener to the list."""
+    def test_add_prompt_compilation_listener_registers_listener(self):
+        """Test that add_prompt_compilation_listener adds a listener to the list."""
         from pixie.prompts.prompt import _prompt_compilation_listeners
 
         def dummy_listener(compiled: CompiledPrompt):
             pass
 
         assert len(_prompt_compilation_listeners) == 0
-        on_prompt_compilation(dummy_listener)
+        add_prompt_compilation_listener(dummy_listener)
         assert len(_prompt_compilation_listeners) == 1
         assert _prompt_compilation_listeners[0] == dummy_listener
 
@@ -1355,7 +1356,7 @@ class TestPromptCompilationListeners:
         def listener(compiled: CompiledPrompt):
             called_with.append(compiled)
 
-        on_prompt_compilation(listener)
+        add_prompt_compilation_listener(listener)
 
         prompt = BasePrompt(versions="Hello world")
         result = prompt.compile()
@@ -1375,7 +1376,7 @@ class TestPromptCompilationListeners:
         def listener(compiled: CompiledPrompt):
             called_with.append(compiled)
 
-        on_prompt_compilation(listener)
+        add_prompt_compilation_listener(listener)
 
         prompt = BasePrompt(
             versions="Hello {{name}}", variables_definition=SampleVariables
@@ -1399,8 +1400,8 @@ class TestPromptCompilationListeners:
         def listener2(compiled: CompiledPrompt):
             calls.append("listener2")
 
-        on_prompt_compilation(listener1)
-        on_prompt_compilation(listener2)
+        add_prompt_compilation_listener(listener1)
+        add_prompt_compilation_listener(listener2)
 
         prompt = BasePrompt(versions="Test")
         prompt.compile()
@@ -1413,7 +1414,7 @@ class TestPromptCompilationListeners:
         def failing_listener(compiled: CompiledPrompt):
             raise ValueError("Listener failed")
 
-        on_prompt_compilation(failing_listener)
+        add_prompt_compilation_listener(failing_listener)
 
         prompt = BasePrompt(versions="Test")
         # Should not raise
@@ -1430,10 +1431,81 @@ class TestPromptCompilationListeners:
         def working_listener(compiled: CompiledPrompt):
             calls.append("worked")
 
-        on_prompt_compilation(failing_listener)
-        on_prompt_compilation(working_listener)
+        add_prompt_compilation_listener(failing_listener)
+        add_prompt_compilation_listener(working_listener)
 
         prompt = BasePrompt(versions="Test")
         prompt.compile()
 
         assert calls == ["worked"]
+
+    def test_remove_prompt_compilation_listener_removes_listener(self):
+        """Test that remove_prompt_compilation_listener removes a listener from the list."""
+        from pixie.prompts.prompt import _prompt_compilation_listeners
+
+        def dummy_listener(compiled: CompiledPrompt):
+            pass
+
+        add_prompt_compilation_listener(dummy_listener)
+        assert len(_prompt_compilation_listeners) == 1
+
+        remove_prompt_compilation_listener(dummy_listener)
+        assert len(_prompt_compilation_listeners) == 0
+
+    def test_remove_nonexistent_listener_does_nothing(self):
+        """Test that removing a listener that was never added does nothing."""
+        from pixie.prompts.prompt import _prompt_compilation_listeners
+
+        def dummy_listener(compiled: CompiledPrompt):
+            pass
+
+        def other_listener(compiled: CompiledPrompt):
+            pass
+
+        add_prompt_compilation_listener(dummy_listener)
+        assert len(_prompt_compilation_listeners) == 1
+
+        # Try to remove a listener that was never added
+        remove_prompt_compilation_listener(other_listener)
+        assert len(_prompt_compilation_listeners) == 1
+        assert _prompt_compilation_listeners[0] == dummy_listener
+
+    def test_removed_listener_not_called(self):
+        """Test that a removed listener is not called during compilation."""
+        called = []
+
+        def listener1(compiled: CompiledPrompt):
+            called.append("listener1")
+
+        def listener2(compiled: CompiledPrompt):
+            called.append("listener2")
+
+        add_prompt_compilation_listener(listener1)
+        add_prompt_compilation_listener(listener2)
+
+        # Remove listener1
+        remove_prompt_compilation_listener(listener1)
+
+        prompt = BasePrompt(versions="Test")
+        prompt.compile()
+
+        # Only listener2 should have been called
+        assert called == ["listener2"]
+
+    def test_remove_same_listener_multiple_times(self):
+        """Test that removing the same listener multiple times is safe."""
+        from pixie.prompts.prompt import _prompt_compilation_listeners
+
+        def dummy_listener(compiled: CompiledPrompt):
+            pass
+
+        add_prompt_compilation_listener(dummy_listener)
+        assert len(_prompt_compilation_listeners) == 1
+
+        # Remove it once
+        remove_prompt_compilation_listener(dummy_listener)
+        assert len(_prompt_compilation_listeners) == 0
+
+        # Remove it again - should do nothing
+        remove_prompt_compilation_listener(dummy_listener)
+        assert len(_prompt_compilation_listeners) == 0
