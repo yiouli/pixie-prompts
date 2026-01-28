@@ -260,6 +260,10 @@ class _FilePromptStorage(PromptStorage):
 _storage_instance: PromptStorage | None = None
 
 
+def get_storage_root_directory() -> str:
+    return os.getenv("PIXIE_PROMPT_STORAGE_DIR", ".pixie/prompts")
+
+
 def _ensure_storage_initialized() -> PromptStorage:
     """Ensure storage is initialized, initializing it if necessary.
 
@@ -268,7 +272,7 @@ def _ensure_storage_initialized() -> PromptStorage:
     """
     global _storage_instance
     if _storage_instance is None:
-        storage_directory = os.getenv("PIXIE_PROMPT_STORAGE_DIR", ".pixie/prompts")
+        storage_directory = get_storage_root_directory()
         _storage_instance = _FilePromptStorage(storage_directory, raise_on_error=False)
         logger.info(
             "Auto-initialized prompt storage at directory: %s", storage_directory

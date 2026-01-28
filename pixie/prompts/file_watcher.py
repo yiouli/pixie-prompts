@@ -10,7 +10,11 @@ from watchdog.observers import Observer
 import asyncio
 import logging
 
-from pixie.prompts.storage import PromptLoadError, initialize_prompt_storage
+from pixie.prompts.storage import (
+    PromptLoadError,
+    get_storage_root_directory,
+    initialize_prompt_storage,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -398,12 +402,8 @@ async def stop_storage_watcher() -> None:
 
 
 def init_prompt_storage():
-    """Initialize prompt storage and return lifespan context manager.
-
-    Storage directory is read from PIXIE_PROMPT_STORAGE_DIR environment variable,
-    defaulting to '.pixie/prompts'.
-    """
-    storage_directory = os.getenv("PIXIE_PROMPT_STORAGE_DIR", ".pixie/prompts")
+    """Initialize prompt storage and return lifespan context manager."""
+    storage_directory = get_storage_root_directory()
     try:
         initialize_prompt_storage()
     except PromptLoadError as e:
