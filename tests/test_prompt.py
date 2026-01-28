@@ -16,9 +16,11 @@ from pixie.prompts.prompt import (
     CompiledPrompt,
     add_prompt_compilation_listener,
     remove_prompt_compilation_listener,
-    _prompt_registry,  # Import the registry explicitly
-    _compiled_prompt_registry,
 )
+
+# Note: Do NOT import _prompt_registry or _compiled_prompt_registry at module level
+# as they may become stale due to module reloading in other tests
+# Instead, import them fresh in each test that needs them
 
 
 class SampleVariables(Variables):
@@ -564,6 +566,23 @@ class TestPromptIntegration:
 class TestPromptUpdateAndOutdated:
     """Tests for Prompt.update() and OutdatedPrompt behavior."""
 
+    @pytest.fixture(autouse=True)
+    def mock_registries(self, monkeypatch):
+        """Clear global registries before each test."""
+        import pixie.prompts.prompt as prompt_module
+
+        self.prompt_module = prompt_module
+
+        # Clear existing registries (don't replace - that doesn't work with module globals)
+        prompt_module._compiled_prompt_registry.clear()
+        prompt_module._prompt_registry.clear()
+
+        yield
+
+        # Clean up after test
+        prompt_module._compiled_prompt_registry.clear()
+        prompt_module._prompt_registry.clear()
+
     @pytest.mark.asyncio
     async def test_prompt_update_returns_outdated_prompt(self):
         """Test that Prompt.update() returns an OutdatedPrompt."""
@@ -647,7 +666,7 @@ class TestPromptUpdateAndOutdated:
 
         # Find the compiled prompt in registry
         compiled_prompt = None
-        for cp in _compiled_prompt_registry.values():
+        for cp in self.prompt_module._compiled_prompt_registry.values():
             if cp.value == compiled_result:
                 compiled_prompt = cp
                 break
@@ -660,7 +679,7 @@ class TestPromptUpdateAndOutdated:
 
         # Check that the same compiled prompt now references OutdatedPrompt
         updated_compiled = None
-        for cp in _compiled_prompt_registry.values():
+        for cp in self.prompt_module._compiled_prompt_registry.values():
             if cp.value == compiled_result:
                 updated_compiled = cp
                 break
@@ -687,7 +706,7 @@ class TestPromptUpdateAndOutdated:
 
         # Find the outdated compiled prompt
         outdated_cp = None
-        for cp in _compiled_prompt_registry.values():
+        for cp in self.prompt_module._compiled_prompt_registry.values():
             if cp.value == compiled_result:
                 outdated_cp = cp
                 break
@@ -704,9 +723,21 @@ class TestBasePromptNewMethods:
     """Tests for newly added methods on BasePrompt: append_version and update_default_version_id."""
 
     @pytest.fixture(autouse=True)
-    def clear_compiled_registry(self):
-        """Clear the compiled prompt registry before each test."""
-        _compiled_prompt_registry.clear()
+    def mock_registries(self, monkeypatch):
+        """Clear global registries before each test."""
+        import pixie.prompts.prompt as prompt_module
+
+        self.prompt_module = prompt_module
+
+        # Clear existing registries (don't replace - that doesn't work with module globals)
+        prompt_module._compiled_prompt_registry.clear()
+        prompt_module._prompt_registry.clear()
+
+        yield
+
+        # Clean up after test
+        prompt_module._compiled_prompt_registry.clear()
+        prompt_module._prompt_registry.clear()
 
     async def test_append_version_adds_new_version(self):
         """Test that append_version adds a new version to the prompt."""
@@ -760,7 +791,7 @@ class TestBasePromptNewMethods:
 
         # Check that compiled prompt now references OutdatedPrompt
         compiled_prompt = None
-        for cp in _compiled_prompt_registry.values():
+        for cp in self.prompt_module._compiled_prompt_registry.values():
             if cp.value == compiled_result:
                 compiled_prompt = cp
                 break
@@ -814,7 +845,7 @@ class TestBasePromptNewMethods:
 
         # Check that compiled prompt now references OutdatedPrompt
         compiled_prompt = None
-        for cp in _compiled_prompt_registry.values():
+        for cp in self.prompt_module._compiled_prompt_registry.values():
             if cp.value == compiled_result:
                 compiled_prompt = cp
                 break
@@ -864,6 +895,23 @@ class TestBasePromptNewMethods:
 class TestUpdatePromptRegistry:
     """Tests for the update_prompt_registry function."""
 
+    @pytest.fixture(autouse=True)
+    def mock_registries(self, monkeypatch):
+        """Clear global registries before each test."""
+        import pixie.prompts.prompt as prompt_module
+
+        self.prompt_module = prompt_module
+
+        # Clear existing registries (don't replace - that doesn't work with module globals)
+        prompt_module._compiled_prompt_registry.clear()
+        prompt_module._prompt_registry.clear()
+
+        yield
+
+        # Clean up after test
+        prompt_module._compiled_prompt_registry.clear()
+        prompt_module._prompt_registry.clear()
+
     @pytest.mark.asyncio
     async def test_update_prompt_registry_new_prompt_raises_error(self):
         """Test that update_prompt_registry raises KeyError for new prompts."""
@@ -877,20 +925,24 @@ class TestUpdatePromptRegistry:
         """Test that update_prompt_registry updates existing prompts."""
         original_prompt = BaseUntypedPrompt(versions={"v1": "Original version"})
         # Manually add to registry with variable definitions
-        _prompt_registry[original_prompt.id] = BasePrompt.from_untyped(
-            original_prompt, variables_definition=SampleVariables
+        self.prompt_module._prompt_registry[original_prompt.id] = (
+            BasePrompt.from_untyped(
+                original_prompt, variables_definition=SampleVariables
+            )
         )
 
         # Temporarily remove from registry to create updated UntypedPrompt
-        del _prompt_registry[original_prompt.id]
+        del self.prompt_module._prompt_registry[original_prompt.id]
 
         updated_prompt = BaseUntypedPrompt(
             id=original_prompt.id, versions={"v1": "Updated version"}
         )
 
         # Add back to registry to simulate existing
-        _prompt_registry[original_prompt.id] = BasePrompt.from_untyped(
-            original_prompt, variables_definition=SampleVariables
+        self.prompt_module._prompt_registry[original_prompt.id] = (
+            BasePrompt.from_untyped(
+                original_prompt, variables_definition=SampleVariables
+            )
         )
 
         result = BasePrompt.update_prompt_registry(updated_prompt)
@@ -1152,15 +1204,26 @@ class TestOutdatedPromptGetMethods:
 class TestGetCompiledPrompt:
     """Tests for get_compiled_prompt function."""
 
-    def setup_method(self):
-        """Clear registries before each test."""
-        _compiled_prompt_registry.clear()
-        _prompt_registry.clear()
+    @pytest.fixture(autouse=True)
+    def mock_registries(self, monkeypatch):
+        """Clear global registries before each test."""
+        import pixie.prompts.prompt as prompt_module
+        import pixie.prompts.storage as storage_module
 
-    def teardown_method(self):
-        """Clear registries after each test."""
-        _compiled_prompt_registry.clear()
-        _prompt_registry.clear()
+        # Clear existing registries (don't replace - that doesn't work with module globals)
+        prompt_module._compiled_prompt_registry.clear()
+        prompt_module._prompt_registry.clear()
+        monkeypatch.setattr(storage_module, "_storage_instance", None)
+
+        # Clean up env var
+        if "PIXIE_PROMPT_STORAGE_DIR" in os.environ:
+            monkeypatch.delenv("PIXIE_PROMPT_STORAGE_DIR")
+
+        yield
+
+        # Clean up after test
+        prompt_module._compiled_prompt_registry.clear()
+        prompt_module._prompt_registry.clear()
 
     def test_get_compiled_prompt_empty_registry(self):
         """Test get_compiled_prompt returns None when registry is empty."""
@@ -1325,29 +1388,36 @@ class TestGetCompiledPrompt:
 class TestPromptCompilationListeners:
     """Tests for prompt compilation listeners."""
 
-    def setup_method(self):
-        """Clear listeners before each test."""
-        from pixie.prompts.prompt import _prompt_compilation_listeners
+    @pytest.fixture(autouse=True)
+    def mock_registries(self, monkeypatch):
+        """Clear global variables before each test."""
+        import pixie.prompts.prompt as prompt_module
+        import pixie.prompts.storage as storage_module
 
-        _prompt_compilation_listeners.clear()
+        # Clear existing lists (don't replace - that doesn't work with module globals)
+        prompt_module._prompt_compilation_listeners.clear()
+        monkeypatch.setattr(storage_module, "_storage_instance", None)
 
-    def teardown_method(self):
-        """Clear listeners after each test."""
-        from pixie.prompts.prompt import _prompt_compilation_listeners
+        # Clean up env var
+        if "PIXIE_PROMPT_STORAGE_DIR" in os.environ:
+            monkeypatch.delenv("PIXIE_PROMPT_STORAGE_DIR")
 
-        _prompt_compilation_listeners.clear()
+        yield
+
+        # Clean up after test
+        prompt_module._prompt_compilation_listeners.clear()
 
     def test_add_prompt_compilation_listener_registers_listener(self):
         """Test that add_prompt_compilation_listener adds a listener to the list."""
-        from pixie.prompts.prompt import _prompt_compilation_listeners
+        import pixie.prompts.prompt as prompt_module
 
         def dummy_listener(compiled: CompiledPrompt):
             pass
 
-        assert len(_prompt_compilation_listeners) == 0
+        assert len(prompt_module._prompt_compilation_listeners) == 0
         add_prompt_compilation_listener(dummy_listener)
-        assert len(_prompt_compilation_listeners) == 1
-        assert _prompt_compilation_listeners[0] == dummy_listener
+        assert len(prompt_module._prompt_compilation_listeners) == 1
+        assert prompt_module._prompt_compilation_listeners[0] == dummy_listener
 
     def test_listener_called_on_compile(self):
         """Test that registered listeners are called when a prompt is compiled."""
@@ -1441,20 +1511,20 @@ class TestPromptCompilationListeners:
 
     def test_remove_prompt_compilation_listener_removes_listener(self):
         """Test that remove_prompt_compilation_listener removes a listener from the list."""
-        from pixie.prompts.prompt import _prompt_compilation_listeners
+        import pixie.prompts.prompt as prompt_module
 
         def dummy_listener(compiled: CompiledPrompt):
             pass
 
         add_prompt_compilation_listener(dummy_listener)
-        assert len(_prompt_compilation_listeners) == 1
+        assert len(prompt_module._prompt_compilation_listeners) == 1
 
         remove_prompt_compilation_listener(dummy_listener)
-        assert len(_prompt_compilation_listeners) == 0
+        assert len(prompt_module._prompt_compilation_listeners) == 0
 
     def test_remove_nonexistent_listener_does_nothing(self):
         """Test that removing a listener that was never added does nothing."""
-        from pixie.prompts.prompt import _prompt_compilation_listeners
+        import pixie.prompts.prompt as prompt_module
 
         def dummy_listener(compiled: CompiledPrompt):
             pass
@@ -1463,12 +1533,12 @@ class TestPromptCompilationListeners:
             pass
 
         add_prompt_compilation_listener(dummy_listener)
-        assert len(_prompt_compilation_listeners) == 1
+        assert len(prompt_module._prompt_compilation_listeners) == 1
 
         # Try to remove a listener that was never added
         remove_prompt_compilation_listener(other_listener)
-        assert len(_prompt_compilation_listeners) == 1
-        assert _prompt_compilation_listeners[0] == dummy_listener
+        assert len(prompt_module._prompt_compilation_listeners) == 1
+        assert prompt_module._prompt_compilation_listeners[0] == dummy_listener
 
     def test_removed_listener_not_called(self):
         """Test that a removed listener is not called during compilation."""
@@ -1494,18 +1564,18 @@ class TestPromptCompilationListeners:
 
     def test_remove_same_listener_multiple_times(self):
         """Test that removing the same listener multiple times is safe."""
-        from pixie.prompts.prompt import _prompt_compilation_listeners
+        import pixie.prompts.prompt as prompt_module
 
         def dummy_listener(compiled: CompiledPrompt):
             pass
 
         add_prompt_compilation_listener(dummy_listener)
-        assert len(_prompt_compilation_listeners) == 1
+        assert len(prompt_module._prompt_compilation_listeners) == 1
 
         # Remove it once
         remove_prompt_compilation_listener(dummy_listener)
-        assert len(_prompt_compilation_listeners) == 0
+        assert len(prompt_module._prompt_compilation_listeners) == 0
 
         # Remove it again - should do nothing
         remove_prompt_compilation_listener(dummy_listener)
-        assert len(_prompt_compilation_listeners) == 0
+        assert len(prompt_module._prompt_compilation_listeners) == 0

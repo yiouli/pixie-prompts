@@ -398,10 +398,14 @@ async def stop_storage_watcher() -> None:
 
 
 def init_prompt_storage():
+    """Initialize prompt storage and return lifespan context manager.
 
+    Storage directory is read from PIXIE_PROMPT_STORAGE_DIR environment variable,
+    defaulting to '.pixie/prompts'.
+    """
     storage_directory = os.getenv("PIXIE_PROMPT_STORAGE_DIR", ".pixie/prompts")
     try:
-        initialize_prompt_storage(storage_directory)
+        initialize_prompt_storage()
     except PromptLoadError as e:
         for err in e.failures:
             logger.error("Prompt load error: %s", err)
@@ -409,7 +413,6 @@ def init_prompt_storage():
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         try:
-            nonlocal storage_directory
             storage_path = Path(storage_directory)
             watch_interval = float(os.getenv("PIXIE_PROMPT_WATCH_INTERVAL", "1.0"))
             await start_storage_watcher(storage_path, watch_interval)

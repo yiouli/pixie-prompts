@@ -260,16 +260,39 @@ class _FilePromptStorage(PromptStorage):
 _storage_instance: PromptStorage | None = None
 
 
+def _ensure_storage_initialized() -> PromptStorage:
+    """Ensure storage is initialized, initializing it if necessary.
+
+    Returns:
+        The initialized storage instance.
+    """
+    global _storage_instance
+    if _storage_instance is None:
+        storage_directory = os.getenv("PIXIE_PROMPT_STORAGE_DIR", ".pixie/prompts")
+        _storage_instance = _FilePromptStorage(storage_directory, raise_on_error=False)
+        logger.info(
+            "Auto-initialized prompt storage at directory: %s", storage_directory
+        )
+        if _storage_instance.load_failures:
+            raise PromptLoadError(_storage_instance.load_failures)
+    return _storage_instance
+
+
 # TODO allow other storage types later
-def initialize_prompt_storage(directory: str) -> None:
+def initialize_prompt_storage() -> None:
+    """Initialize prompt storage.
+
+    The storage directory is read from the PIXIE_PROMPT_STORAGE_DIR environment
+    variable, defaulting to '.pixie/prompts'.
+
+    Raises:
+        RuntimeError: If storage has already been initialized.
+        PromptLoadError: If there are failures loading prompts.
+    """
     global _storage_instance
     if _storage_instance is not None:
         raise RuntimeError("Prompt storage has already been initialized.")
-    storage = _FilePromptStorage(directory, raise_on_error=False)
-    _storage_instance = storage
-    logger.info("Initialized prompt storage at directory: %s", directory)
-    if storage.load_failures:
-        raise PromptLoadError(storage.load_failures)
+    _ensure_storage_initialized()
 
 
 class StorageBackedPrompt(Prompt[TPromptVar]):
@@ -296,10 +319,9 @@ class StorageBackedPrompt(Prompt[TPromptVar]):
         return variables_definition_to_schema(self._variables_definition)
 
     def _get_prompt(self) -> BasePrompt[TPromptVar]:
-        if _storage_instance is None:
-            raise RuntimeError("Prompt storage has not been initialized.")
+        storage = _ensure_storage_initialized()
         if self._prompt is None:
-            untyped_prompt = _storage_instance.get(self.id)
+            untyped_prompt = storage.get(self.id)
             self._prompt = BasePrompt.from_untyped(
                 untyped_prompt,
                 variables_definition=self.variables_definition,
@@ -317,8 +339,7 @@ class StorageBackedPrompt(Prompt[TPromptVar]):
         return self
 
     def exists_in_storage(self) -> bool:
-        if _storage_instance is None:
-            raise RuntimeError("Prompt storage has not been initialized.")
+        _ensure_storage_initialized()
         try:
             self.actualize()
             return True
@@ -330,9 +351,8 @@ class StorageBackedPrompt(Prompt[TPromptVar]):
         return prompt.get_versions()
 
     def get_version_creation_time(self, version_id: str) -> float:
-        if _storage_instance is None:
-            raise RuntimeError("Prompt storage has not been initialized.")
-        prompt_with_ctime = _storage_instance.get(self.id)
+        storage = _ensure_storage_initialized()
+        prompt_with_ctime = storage.get(self.id)
         if not prompt_with_ctime:
             raise KeyError(f"Prompt with id '{self.id}' not found in storage.")
         return prompt_with_ctime.get_version_creation_time(version_id)
@@ -364,8 +384,7 @@ class StorageBackedPrompt(Prompt[TPromptVar]):
         content: str,
         set_as_default: bool = False,
     ) -> BasePrompt[TPromptVar]:
-        if _storage_instance is None:
-            raise RuntimeError("Prompt storage has not been initialized.")
+        storage = _ensure_storage_initialized()
         if self.exists_in_storage():
             prompt = self._get_prompt()
             prompt.append_version(
@@ -373,7 +392,7 @@ class StorageBackedPrompt(Prompt[TPromptVar]):
                 content=content,
                 set_as_default=set_as_default,
             )
-            _storage_instance.save(prompt)
+            storage.save(prompt)
             return prompt
         else:
             # it should be safe to assume there's no actualized prompt for this id
@@ -384,16 +403,15 @@ class StorageBackedPrompt(Prompt[TPromptVar]):
                 variables_definition=self.variables_definition,
                 default_version_id=version_id,
             )
-            _storage_instance.save(new_prompt)
+            storage.save(new_prompt)
             return new_prompt
 
     def update_default_version_id(
         self,
         version_id: str,
     ) -> BasePrompt[TPromptVar]:
-        if _storage_instance is None:
-            raise RuntimeError("Prompt storage has not been initialized.")
+        storage = _ensure_storage_initialized()
         prompt = self._get_prompt()
         prompt.update_default_version_id(version_id)
-        _storage_instance.save(prompt)
+        storage.save(prompt)
         return prompt

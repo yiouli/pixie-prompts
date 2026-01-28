@@ -239,7 +239,7 @@ async def test_init_prompt_storage_lifespan_starts_and_stops_watcher(
     # Mock the storage initialization
     initialized = []
     monkeypatch.setattr(
-        file_watcher, "initialize_prompt_storage", lambda path: initialized.append(path)
+        file_watcher, "initialize_prompt_storage", lambda: initialized.append(True)
     )
 
     # Mock start and stop
@@ -270,8 +270,9 @@ async def test_init_prompt_storage_lifespan_starts_and_stops_watcher(
     async with lifespan(app):
         pass
 
-    # Check that storage was initialized with default path
-    assert initialized == [".pixie/prompts"]
+    # Check that storage was initialized
+    assert len(initialized) == 1
+    assert initialized[0] is True
 
     # Check that watcher was started and stopped
     assert len(start_calls) == 1
@@ -291,7 +292,7 @@ async def test_init_prompt_storage_lifespan_handles_env_vars(monkeypatch, tmp_pa
 
     initialized = []
     monkeypatch.setattr(
-        file_watcher, "initialize_prompt_storage", lambda path: initialized.append(path)
+        file_watcher, "initialize_prompt_storage", lambda: initialized.append(True)
     )
 
     start_calls = []
@@ -315,8 +316,9 @@ async def test_init_prompt_storage_lifespan_handles_env_vars(monkeypatch, tmp_pa
     async with lifespan(app):
         pass
 
-    # Check custom path and interval
-    assert initialized == [str(tmp_path / "custom_prompts")]
+    # Check initialize_prompt_storage was called (path comes from env var)
+    assert len(initialized) == 1
+    assert initialized[0] is True
     path, interval = start_calls[0]
     assert str(path) == str(tmp_path / "custom_prompts")
     assert interval == 2.5

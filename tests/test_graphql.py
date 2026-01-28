@@ -1,12 +1,12 @@
 """Unit tests for GraphQL endpoints."""
 
+import os
 import pytest
 import tempfile
 from typing import Any
 
 from pixie.prompts.graphql import schema
 from pixie.prompts.prompt_management import create_prompt, _registry
-from pixie.prompts.storage import initialize_prompt_storage
 from pixie.prompts import storage as storage_module
 
 
@@ -18,14 +18,16 @@ class TestGraphQLQueries:
         _registry.clear()
         # Reset storage instance
         storage_module._storage_instance = None
-        # Initialize storage in a temp directory
+        # Set up temp directory for storage via environment variable
         self.temp_dir = tempfile.mkdtemp()
-        initialize_prompt_storage(self.temp_dir)
+        os.environ["PIXIE_PROMPT_STORAGE_DIR"] = self.temp_dir
 
     def teardown_method(self) -> None:
         """Clean up after each test."""
         _registry.clear()
         storage_module._storage_instance = None
+        if "PIXIE_PROMPT_STORAGE_DIR" in os.environ:
+            del os.environ["PIXIE_PROMPT_STORAGE_DIR"]
 
     @pytest.mark.asyncio
     async def test_health_check(self) -> None:
@@ -163,14 +165,16 @@ class TestGraphQLMutations:
         _registry.clear()
         # Reset storage instance
         storage_module._storage_instance = None
-        # Initialize storage in a temp directory
+        # Set up temp directory for storage via environment variable
         self.temp_dir = tempfile.mkdtemp()
-        initialize_prompt_storage(self.temp_dir)
+        os.environ["PIXIE_PROMPT_STORAGE_DIR"] = self.temp_dir
 
     def teardown_method(self) -> None:
         """Clean up after each test."""
         _registry.clear()
         storage_module._storage_instance = None
+        if "PIXIE_PROMPT_STORAGE_DIR" in os.environ:
+            del os.environ["PIXIE_PROMPT_STORAGE_DIR"]
 
     @pytest.mark.asyncio
     async def test_add_prompt_version_success(self) -> None:
