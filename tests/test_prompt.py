@@ -1247,16 +1247,31 @@ class TestGetCompiledPrompt:
         assert result.version_id == DEFAULT_VERSION_ID
 
     def test_get_compiled_prompt_value_match(self):
-        """Test get_compiled_prompt finds prompt by value when direct match fails."""
+        """Test get_compiled_prompt finds prompt when the input text contains the compiled prompt."""
+        from pixie.prompts.prompt import get_compiled_prompt
+
+        prompt = BasePrompt(versions="world")
+        prompt.compile()
+
+        # Input text that contains the compiled prompt
+        containing_text = "hello world"
+
+        result = get_compiled_prompt(containing_text)
+        assert result is not None
+        assert result.value == "world"
+        assert result.prompt == prompt
+
+    def test_get_compiled_prompt_exact_match_still_works(self):
+        """Test get_compiled_prompt still works with exact matches."""
         from pixie.prompts.prompt import get_compiled_prompt
 
         prompt = BasePrompt(versions="Test prompt")
         prompt.compile()
 
-        # Create a new string with same content but different id
-        same_text = "Test prompt"
+        # Exact match should still work
+        exact_text = "Test prompt"
 
-        result = get_compiled_prompt(same_text)
+        result = get_compiled_prompt(exact_text)
         assert result is not None
         assert result.value == "Test prompt"
         assert result.prompt == prompt
@@ -1323,13 +1338,26 @@ class TestGetCompiledPrompt:
         assert result.prompt == prompt
 
     def test_get_compiled_prompt_no_match(self):
-        """Test get_compiled_prompt returns None when no match is found."""
+        """Test get_compiled_prompt returns None when input text is not contained in any compiled prompt."""
         from pixie.prompts.prompt import get_compiled_prompt
 
         prompt = BasePrompt(versions="Test prompt")
         prompt.compile()  # Add to registry
 
-        result = get_compiled_prompt("Completely different text")
+        result = get_compiled_prompt(
+            "Completely different text with no matching content"
+        )
+        assert result is None
+
+    def test_get_compiled_prompt_partial_no_match(self):
+        """Test get_compiled_prompt doesn't match when the compiled prompt is not contained in the input text."""
+        from pixie.prompts.prompt import get_compiled_prompt
+
+        prompt = BasePrompt(versions="hello world")
+        prompt.compile()  # Add to registry
+
+        # "world" does not contain "hello world"
+        result = get_compiled_prompt("world")
         assert result is None
 
     def test_get_compiled_prompt_invalid_json(self):

@@ -49,7 +49,7 @@ key is the id() of the compiled string."""
 def _find_matching_prompt(obj):
     if isinstance(obj, str):
         for compiled in _compiled_prompt_registry.values():
-            if compiled.value == obj:
+            if compiled.value in obj:
                 return compiled
         return None
     elif isinstance(obj, dict):
@@ -76,7 +76,7 @@ def get_compiled_prompt(text: str) -> CompiledPrompt | None:
     if direct_match:
         return direct_match
     for compiled in _compiled_prompt_registry.values():
-        if compiled.value == text:
+        if compiled.value in text:
             return compiled
     try:
         obj = json.loads(text)
