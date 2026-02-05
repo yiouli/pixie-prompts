@@ -41,6 +41,10 @@ class PromptLoadError(Exception):
         super().__init__(message)
 
 
+class PromptNotFoundError(KeyError):
+    pass
+
+
 class BaseUntypedPromptWithCreationTime(BaseUntypedPrompt):
 
     def __init__(
@@ -254,7 +258,12 @@ class _FilePromptStorage(PromptStorage):
         return original is None
 
     def get(self, prompt_id: str) -> BaseUntypedPromptWithCreationTime:
-        return self._prompts[prompt_id]
+        try:
+            return self._prompts[prompt_id]
+        except KeyError:
+            raise PromptNotFoundError(
+                f"Prompt with ID '{prompt_id}' not found in storage."
+            )
 
 
 _storage_instance: PromptStorage | None = None
@@ -306,9 +315,11 @@ class StorageBackedPrompt(Prompt[TPromptVar]):
         id: str,
         *,
         variables_definition: type[TPromptVar] = NoneType,
+        default: str | None = None,
     ) -> None:
         self._id = id
         self._variables_definition = variables_definition
+        self._default = default
         self._prompt: BasePrompt[TPromptVar] | None = None
 
     @property
@@ -319,24 +330,42 @@ class StorageBackedPrompt(Prompt[TPromptVar]):
     def variables_definition(self) -> type[TPromptVar]:
         return self._variables_definition
 
+    @property
+    def default(self) -> str | None:
+        return self._default
+
     def get_variables_schema(self) -> dict[str, Any]:
         return variables_definition_to_schema(self._variables_definition)
 
     def _get_prompt(self) -> BasePrompt[TPromptVar]:
-        storage = _ensure_storage_initialized()
-        if self._prompt is None:
-            untyped_prompt = storage.get(self.id)
-            self._prompt = BasePrompt.from_untyped(
-                untyped_prompt,
+        if self._prompt is not None:
+            return self._prompt
+        try:
+            storage = _ensure_storage_initialized()
+            if self._prompt is None:
+                untyped_prompt = storage.get(self.id)
+                self._prompt = BasePrompt.from_untyped(
+                    untyped_prompt,
+                    variables_definition=self.variables_definition,
+                )
+                schema_from_storage = untyped_prompt.get_variables_schema()
+                schema_from_definition = self.get_variables_schema()
+                if not isSubschema(schema_from_definition, schema_from_storage):
+                    raise TypeError(
+                        "Schema from definition is not a subschema of the schema from storage."
+                    )
+            return self._prompt
+        except (PromptNotFoundError, PromptLoadError):
+            if self.default is None:
+                raise PromptNotFoundError(
+                    f"Cannot load prompt with id '{self.id}' from storage, and no default is provided."
+                )
+            self._prompt = BasePrompt(
+                id=self.id,
+                versions={"v0": self.default},
                 variables_definition=self.variables_definition,
             )
-            schema_from_storage = untyped_prompt.get_variables_schema()
-            schema_from_definition = self.get_variables_schema()
-            if not isSubschema(schema_from_definition, schema_from_storage):
-                raise TypeError(
-                    "Schema from definition is not a subschema of the schema from storage."
-                )
-        return self._prompt
+            return self._prompt
 
     def actualize(self) -> Self:
         self._get_prompt()

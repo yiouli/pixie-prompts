@@ -715,3 +715,473 @@ class TestInitializePromptStorage:
         failures = excinfo.value.failures
         assert len(failures) == 1
         assert isinstance(failures[0].error, json.JSONDecodeError)
+
+
+class TestStorageBackedPromptWithDefault:
+    """Tests for StorageBackedPrompt with default value functionality."""
+
+    @pytest.fixture(autouse=True)
+    def clear_prompt_registry(self):
+        """Clear the global prompt registry before each test."""
+        _prompt_registry.clear()
+
+    @pytest.fixture(autouse=True)
+    def reset_storage_instance(self):
+        """Reset the global storage instance before each test."""
+        import pixie.prompts.storage as storage_module
+
+        storage_module._storage_instance = None
+        if "PIXIE_PROMPT_STORAGE_DIR" in os.environ:
+            del os.environ["PIXIE_PROMPT_STORAGE_DIR"]
+        yield
+        storage_module._storage_instance = None
+        if "PIXIE_PROMPT_STORAGE_DIR" in os.environ:
+            del os.environ["PIXIE_PROMPT_STORAGE_DIR"]
+
+    @pytest.fixture
+    def temp_dir(self):
+        """Create a temporary directory for testing."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            yield tmpdir
+
+    # Scenario 1: Read methods with default, no storage
+    def test_get_versions_with_default_without_storage(self, temp_dir: str):
+        """Test that get_versions works with default value when prompt is not in storage."""
+        from pixie.prompts.storage import StorageBackedPrompt
+
+        os.environ["PIXIE_PROMPT_STORAGE_DIR"] = temp_dir
+
+        # Create prompt with default, but don't add it to storage
+        prompt = StorageBackedPrompt(
+            id="test_prompt", default="Hello {{name}}, welcome!"
+        )
+
+        # get_versions should work and return the default version
+        versions = prompt.get_versions()
+        assert versions == {"v0": "Hello {{name}}, welcome!"}
+
+    def test_get_default_version_id_with_default_without_storage(self, temp_dir: str):
+        """Test that get_default_version_id works with default value when prompt is not in storage."""
+        from pixie.prompts.storage import StorageBackedPrompt
+
+        os.environ["PIXIE_PROMPT_STORAGE_DIR"] = temp_dir
+
+        prompt = StorageBackedPrompt(
+            id="test_prompt", default="Hello {{name}}, welcome!"
+        )
+
+        # get_default_version_id should work and return the default version id
+        default_version_id = prompt.get_default_version_id()
+        assert default_version_id == "v0"
+
+    def test_compile_with_default_without_storage(self, temp_dir: str):
+        """Test that compile works with default value when prompt is not in storage."""
+        from pixie.prompts.storage import StorageBackedPrompt
+        from pixie.prompts.prompt import Variables
+
+        class TestVars(Variables):
+            name: str
+
+        os.environ["PIXIE_PROMPT_STORAGE_DIR"] = temp_dir
+
+        # Create prompt with default
+        prompt = StorageBackedPrompt(
+            id="test_prompt",
+            default="Hello {{name}}, welcome!",
+            variables_definition=TestVars,
+        )
+
+        # compile should work with the default template
+        result = prompt.compile(TestVars(name="World"))
+        assert result == "Hello World, welcome!"
+
+    def test_compile_with_version_id_with_default_without_storage(self, temp_dir: str):
+        """Test that compile with version_id works with default value when prompt is not in storage."""
+        from pixie.prompts.storage import StorageBackedPrompt
+        from pixie.prompts.prompt import Variables
+
+        class TestVars(Variables):
+            name: str
+
+        os.environ["PIXIE_PROMPT_STORAGE_DIR"] = temp_dir
+
+        prompt = StorageBackedPrompt(
+            id="test_prompt",
+            default="Hello {{name}}, welcome!",
+            variables_definition=TestVars,
+        )
+
+        # compile with explicit version_id should work
+        result = prompt.compile(TestVars(name="World"), version_id="v0")
+        assert result == "Hello World, welcome!"
+
+    def test_get_version_count_with_default_without_storage(self, temp_dir: str):
+        """Test that get_version_count works with default value when prompt is not in storage."""
+        from pixie.prompts.storage import StorageBackedPrompt
+
+        os.environ["PIXIE_PROMPT_STORAGE_DIR"] = temp_dir
+
+        prompt = StorageBackedPrompt(
+            id="test_prompt", default="Hello {{name}}, welcome!"
+        )
+
+        # get_version_count should return 1 (the default version)
+        count = prompt.get_version_count()
+        assert count == 1
+
+    def test_compile_without_variables_with_default_without_storage(
+        self, temp_dir: str
+    ):
+        """Test that compile works without variables when using default."""
+        from pixie.prompts.storage import StorageBackedPrompt
+
+        os.environ["PIXIE_PROMPT_STORAGE_DIR"] = temp_dir
+
+        # Create prompt with default that has no variables
+        prompt = StorageBackedPrompt(id="test_prompt", default="Static content")
+
+        # compile should work without variables
+        result = prompt.compile()
+        assert result == "Static content"
+
+    # Scenario 2: Write methods with default, no storage
+    def test_append_version_with_default_without_storage_creates_in_storage(
+        self, temp_dir: str
+    ):
+        """Test that append_version with default but no storage creates a new prompt in storage."""
+        from pixie.prompts.storage import StorageBackedPrompt
+
+        os.environ["PIXIE_PROMPT_STORAGE_DIR"] = temp_dir
+
+        # Create prompt with default, not in storage
+        prompt = StorageBackedPrompt(
+            id="test_prompt", default="Hello {{name}}, welcome!"
+        )
+
+        # append_version should create a new prompt in storage
+        result = prompt.append_version(version_id="v1", content="New version content")
+        assert result is not None
+
+        # Verify the prompt was created in storage
+        assert prompt.exists_in_storage()
+
+        # Verify the version was added
+        versions = prompt.get_versions()
+        assert "v1" in versions
+        assert versions["v1"] == "New version content"
+
+    def test_update_default_version_id_with_default_without_storage_fails(
+        self, temp_dir: str
+    ):
+        """Test that update_default_version_id fails when prompt is not in storage, even with default."""
+        from pixie.prompts.storage import StorageBackedPrompt
+
+        os.environ["PIXIE_PROMPT_STORAGE_DIR"] = temp_dir
+
+        # Create prompt with default, not in storage
+        prompt = StorageBackedPrompt(
+            id="test_prompt", default="Hello {{name}}, welcome!"
+        )
+
+        # Since the prompt is initialized with only v0 in memory,
+        # trying to update to a non-existent version should fail
+        with pytest.raises(ValueError, match="does not exist"):
+            prompt.update_default_version_id(version_id="v1")
+
+    def test_get_version_creation_time_with_default_without_storage_fails(
+        self, temp_dir: str
+    ):
+        """Test that get_version_creation_time fails when prompt is not in storage."""
+        from pixie.prompts.storage import StorageBackedPrompt
+
+        os.environ["PIXIE_PROMPT_STORAGE_DIR"] = temp_dir
+
+        # Create prompt with default, not in storage
+        prompt = StorageBackedPrompt(
+            id="test_prompt", default="Hello {{name}}, welcome!"
+        )
+
+        # get_version_creation_time should fail because it requires storage
+        with pytest.raises(KeyError, match="not found in storage"):
+            prompt.get_version_creation_time(version_id="v0")
+
+    # Scenario 3: Read methods without default, no storage
+    def test_get_versions_without_default_without_storage_fails(self, temp_dir: str):
+        """Test that get_versions fails without default when prompt is not in storage."""
+        from pixie.prompts.storage import StorageBackedPrompt, PromptNotFoundError
+
+        os.environ["PIXIE_PROMPT_STORAGE_DIR"] = temp_dir
+
+        # Create prompt without default
+        prompt = StorageBackedPrompt(id="test_prompt")
+
+        # get_versions should fail
+        with pytest.raises(PromptNotFoundError, match="no default is provided"):
+            prompt.get_versions()
+
+    def test_compile_without_default_without_storage_fails(self, temp_dir: str):
+        """Test that compile fails without default when prompt is not in storage."""
+        from pixie.prompts.storage import StorageBackedPrompt, PromptNotFoundError
+
+        os.environ["PIXIE_PROMPT_STORAGE_DIR"] = temp_dir
+
+        prompt = StorageBackedPrompt(id="test_prompt")
+
+        # compile should fail
+        with pytest.raises(PromptNotFoundError, match="no default is provided"):
+            prompt.compile()
+
+    def test_get_default_version_id_without_default_without_storage_fails(
+        self, temp_dir: str
+    ):
+        """Test that get_default_version_id fails without default when prompt is not in storage."""
+        from pixie.prompts.storage import StorageBackedPrompt, PromptNotFoundError
+
+        os.environ["PIXIE_PROMPT_STORAGE_DIR"] = temp_dir
+
+        prompt = StorageBackedPrompt(id="test_prompt")
+
+        # get_default_version_id should fail
+        with pytest.raises(PromptNotFoundError, match="no default is provided"):
+            prompt.get_default_version_id()
+
+    def test_get_version_count_without_default_without_storage_returns_zero(
+        self, temp_dir: str
+    ):
+        """Test that get_version_count returns 0 without default when prompt is not in storage."""
+        from pixie.prompts.storage import StorageBackedPrompt
+
+        os.environ["PIXIE_PROMPT_STORAGE_DIR"] = temp_dir
+
+        prompt = StorageBackedPrompt(id="test_prompt")
+
+        # get_version_count should return 0
+        count = prompt.get_version_count()
+        assert count == 0
+
+    def test_exists_in_storage_without_default_without_storage_returns_false(
+        self, temp_dir: str
+    ):
+        """Test that exists_in_storage returns False without default when prompt is not in storage."""
+        from pixie.prompts.storage import StorageBackedPrompt
+
+        os.environ["PIXIE_PROMPT_STORAGE_DIR"] = temp_dir
+
+        prompt = StorageBackedPrompt(id="test_prompt")
+
+        # exists_in_storage should return False
+        assert prompt.exists_in_storage() is False
+
+    # Scenario 4: Read/write with default and with storage
+    def test_read_methods_with_default_and_storage_use_storage(self, temp_dir: str):
+        """Test that read methods use storage data when both default and storage exist."""
+        from pixie.prompts.storage import StorageBackedPrompt
+
+        # Create a prompt in storage
+        write_prompt_folder(
+            temp_dir,
+            "test_prompt",
+            versions={"v1": "Storage content {{name}}", "v2": "Version 2 {{name}}"},
+            default_version_id="v1",
+            variables_schema={"type": "object", "properties": {}},
+        )
+
+        os.environ["PIXIE_PROMPT_STORAGE_DIR"] = temp_dir
+
+        # Create prompt with default - but storage should take precedence
+        prompt = StorageBackedPrompt(
+            id="test_prompt", default="Default content {{name}}"
+        )
+
+        # get_versions should return storage versions, not the default
+        versions = prompt.get_versions()
+        assert versions == {
+            "v1": "Storage content {{name}}",
+            "v2": "Version 2 {{name}}",
+        }
+        assert "v0" not in versions  # default version should not be present
+
+        # get_default_version_id should return storage default
+        default_id = prompt.get_default_version_id()
+        assert default_id == "v1"
+
+    def test_compile_with_default_and_storage_uses_storage(self, temp_dir: str):
+        """Test that compile uses storage template when both default and storage exist."""
+        from pixie.prompts.storage import StorageBackedPrompt
+        from pixie.prompts.prompt import Variables
+
+        class TestVars(Variables):
+            name: str
+
+        # Create a prompt in storage
+        write_prompt_folder(
+            temp_dir,
+            "test_prompt",
+            versions={"v1": "From storage: {{name}}"},
+            default_version_id="v1",
+            variables_schema={"type": "object", "properties": {}},
+        )
+
+        os.environ["PIXIE_PROMPT_STORAGE_DIR"] = temp_dir
+
+        # Create prompt with default
+        prompt = StorageBackedPrompt(
+            id="test_prompt",
+            default="From default: {{name}}",
+            variables_definition=TestVars,
+        )
+
+        # compile should use storage template, not default
+        result = prompt.compile(TestVars(name="World"))
+        assert result == "From storage: World"
+        assert "default" not in result
+
+    def test_append_version_with_default_and_storage_updates_storage(
+        self, temp_dir: str
+    ):
+        """Test that append_version updates storage when both default and storage exist."""
+        from pixie.prompts.storage import StorageBackedPrompt
+
+        # Create a prompt in storage
+        write_prompt_folder(
+            temp_dir,
+            "test_prompt",
+            versions={"v1": "Original content"},
+            default_version_id="v1",
+            variables_schema={"type": "object", "properties": {}},
+        )
+
+        os.environ["PIXIE_PROMPT_STORAGE_DIR"] = temp_dir
+
+        # Create prompt with default
+        prompt = StorageBackedPrompt(id="test_prompt", default="Default content")
+
+        # append_version should update storage
+        prompt.append_version(version_id="v2", content="New version")
+
+        # Verify new version exists
+        versions = prompt.get_versions()
+        assert "v2" in versions
+        assert versions["v2"] == "New version"
+        assert versions["v1"] == "Original content"
+
+    def test_update_default_version_id_with_default_and_storage_updates_storage(
+        self, temp_dir: str
+    ):
+        """Test that update_default_version_id updates storage when both default and storage exist."""
+        from pixie.prompts.storage import StorageBackedPrompt
+
+        # Create a prompt in storage
+        write_prompt_folder(
+            temp_dir,
+            "test_prompt",
+            versions={"v1": "Version 1", "v2": "Version 2"},
+            default_version_id="v1",
+            variables_schema={"type": "object", "properties": {}},
+        )
+
+        os.environ["PIXIE_PROMPT_STORAGE_DIR"] = temp_dir
+
+        # Create prompt with default
+        prompt = StorageBackedPrompt(id="test_prompt", default="Default content")
+
+        # update_default_version_id should update storage
+        prompt.update_default_version_id(version_id="v2")
+
+        # Verify default version changed
+        default_id = prompt.get_default_version_id()
+        assert default_id == "v2"
+
+    def test_default_property_accessor(self, temp_dir: str):
+        """Test that the default property returns the correct value."""
+        from pixie.prompts.storage import StorageBackedPrompt
+
+        os.environ["PIXIE_PROMPT_STORAGE_DIR"] = temp_dir
+
+        # Test with default
+        prompt_with_default = StorageBackedPrompt(
+            id="test_prompt", default="My default content"
+        )
+        assert prompt_with_default.default == "My default content"
+
+        # Test without default
+        prompt_without_default = StorageBackedPrompt(id="test_prompt2")
+        assert prompt_without_default.default is None
+
+    def test_default_survives_actualization(self, temp_dir: str):
+        """Test that the default value is accessible even after prompt actualization."""
+        from pixie.prompts.storage import StorageBackedPrompt
+
+        os.environ["PIXIE_PROMPT_STORAGE_DIR"] = temp_dir
+
+        default_content = "My default content {{name}}"
+        prompt = StorageBackedPrompt(id="test_prompt", default=default_content)
+
+        # Actualize the prompt (loads it with default since not in storage)
+        prompt.actualize()
+
+        # Default property should still return the original default
+        assert prompt.default == default_content
+
+    def test_compile_with_complex_default_template(self, temp_dir: str):
+        """Test compile with a more complex default template."""
+        from pixie.prompts.storage import StorageBackedPrompt
+        from pixie.prompts.prompt import Variables
+
+        class TestVars(Variables):
+            name: str
+            age: int
+
+        os.environ["PIXIE_PROMPT_STORAGE_DIR"] = temp_dir
+
+        # Create prompt with complex default template
+        default_template = """Hello {{name}}!
+You are {{age}} years old.
+{% if age >= 18 %}
+You are an adult.
+{% else %}
+You are a minor.
+{% endif %}"""
+
+        prompt = StorageBackedPrompt(
+            id="test_prompt",
+            default=default_template,
+            variables_definition=TestVars,
+        )
+
+        # Test with adult
+        result_adult = prompt.compile(TestVars(name="Alice", age=25))
+        assert "Hello Alice!" in result_adult
+        assert "You are 25 years old." in result_adult
+        assert "You are an adult." in result_adult
+
+        # Test with minor
+        result_minor = prompt.compile(TestVars(name="Bob", age=15))
+        assert "Hello Bob!" in result_minor
+        assert "You are 15 years old." in result_minor
+        assert "You are a minor." in result_minor
+
+    def test_multiple_prompts_with_different_defaults(self, temp_dir: str):
+        """Test that multiple prompts can have different defaults."""
+        from pixie.prompts.storage import StorageBackedPrompt
+
+        os.environ["PIXIE_PROMPT_STORAGE_DIR"] = temp_dir
+
+        prompt1 = StorageBackedPrompt(id="prompt1", default="Default 1")
+        prompt2 = StorageBackedPrompt(id="prompt2", default="Default 2")
+        prompt3 = StorageBackedPrompt(id="prompt3")  # No default
+
+        # Each should maintain its own default
+        assert prompt1.default == "Default 1"
+        assert prompt2.default == "Default 2"
+        assert prompt3.default is None
+
+        # Each should compile with its own default
+        assert prompt1.compile() == "Default 1"
+        assert prompt2.compile() == "Default 2"
+
+        # prompt3 should fail
+        from pixie.prompts.storage import PromptNotFoundError
+
+        with pytest.raises(PromptNotFoundError):
+            prompt3.compile()
