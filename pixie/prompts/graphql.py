@@ -95,6 +95,22 @@ class LlmCallResult:
     reasoning: str | None
 
 
+@strawberry.input
+class LlmCallInput:
+    """Input for a single LLM call in a batch."""
+
+    id: strawberry.ID
+    """Unique identifier for this call, used to correlate results."""
+    model: str
+    prompt_template: str
+    variables: Optional[JSON] = None
+    prompt_placeholder: str = "{{prompt}}"
+    input_messages: list[JSON] = strawberry.field(default_factory=list)
+    output_schema: Optional[JSON] = None
+    tools: Optional[list[JSON]] = None
+    model_parameters: Optional[JSON] = None
+
+
 def is_demo_mode() -> bool:
     is_demo_mode = os.getenv("IS_DEMO_MODE", "0") in ("1", "true", "True")
     return is_demo_mode
@@ -227,77 +243,20 @@ class Mutation:
             GraphQLError: If the LLM call fails.
         """
         try:
-            if is_demo_mode():
-                model = "openai:gpt-4o-mini"
-            template = jinja2.Template(prompt_template)
-            prompt = template.render(**(cast(dict[str, Any], variables) or {}))
-            print(prompt)
-            print(type(prompt))
-            pydantic_messages = openai_messages_to_pydantic_ai_messages(
-                cast(list[dict[str, Any]], input_messages)
-            )
-            for msg in pydantic_messages:
-                for part in msg.parts:
-                    if part.part_kind == "user-prompt":
-                        if isinstance(part.content, str):
-                            part.content = part.content.replace(
-                                prompt_placeholder,
-                                prompt,
-                            )
-                        else:
-                            part.content = [
-                                p.replace(prompt_placeholder, prompt)
-                                for p in part.content
-                                if isinstance(p, str)
-                            ]
-                    elif part.part_kind == "system-prompt":
-                        part.content = part.content.replace(prompt_placeholder, prompt)
-
-            # Replace the placeholder in input messages
-            response = await model_request(
+            call_input = LlmCallInput(
+                id=strawberry.ID("single-call"),
                 model=model,
-                messages=pydantic_messages,
-                model_settings=cast(ModelSettings | None, model_parameters),
-                model_request_parameters=assemble_model_request_parameters(
-                    cast(dict[str, Any] | None, output_schema),
-                    cast(list[dict[str, Any]] | None, tools),
-                    strict=True,
-                    allow_text_output=False,
-                ),
+                prompt_template=prompt_template,
+                variables=variables,
+                prompt_placeholder=prompt_placeholder,
+                input_messages=input_messages,
+                output_schema=output_schema,
+                tools=tools,
+                model_parameters=model_parameters,
             )
-            return LlmCallResult(
-                input=JSON(pydantic_ai_messages_to_openai_messages(pydantic_messages)),
-                output=(
-                    JSON(json.loads(response.text) if output_schema else response.text)
-                    if response.text
-                    else None
-                ),
-                tool_calls=(
-                    [
-                        ToolCall(
-                            name=tc.tool_name,
-                            args=JSON(tc.args_as_dict()),
-                            tool_call_id=strawberry.ID(tc.tool_call_id),
-                        )
-                        for tc in response.tool_calls
-                    ]
-                    if response.tool_calls
-                    else None
-                ),
-                usage=JSON(
-                    {
-                        "input_tokens": response.usage.input_tokens,
-                        "output_tokens": response.usage.output_tokens,
-                        "total_tokens": response.usage.total_tokens,
-                    }
-                ),
-                cost=float(response.cost().total_price),
-                timestamp=response.timestamp,
-                reasoning=response.thinking,
-            )
+            return await execute_single_llm_call(call_input)
         except Exception as e:
-            logger.error("Error running LLM: %s", str(e))
-            raise GraphQLError(f"Failed to run LLM: {str(e)}") from e
+            raise GraphQLError(f"LLM call failed: {str(e)}") from e
 
     @strawberry.mutation
     async def add_prompt_version(
@@ -362,6 +321,86 @@ class Mutation:
                 f"Failed to update default prompt version: {str(e)}"
             ) from e
         return "OK"
+
+
+async def execute_single_llm_call(
+    call_input: LlmCallInput,
+) -> LlmCallResult:
+    """Execute a single LLM call and return the result as a BatchLlmCallUpdate."""
+    model = call_input.model
+    template = jinja2.Template(call_input.prompt_template)
+    prompt = template.render(**(cast(dict[str, Any], call_input.variables) or {}))
+
+    pydantic_messages = openai_messages_to_pydantic_ai_messages(
+        cast(list[dict[str, Any]], call_input.input_messages)
+    )
+
+    # Replace the placeholder in messages
+    for msg in pydantic_messages:
+        for part in msg.parts:
+            if part.part_kind == "user-prompt":
+                if isinstance(part.content, str):
+                    part.content = part.content.replace(
+                        call_input.prompt_placeholder,
+                        prompt,
+                    )
+                else:
+                    part.content = [
+                        p.replace(call_input.prompt_placeholder, prompt)
+                        for p in part.content
+                        if isinstance(p, str)
+                    ]
+            elif part.part_kind == "system-prompt":
+                part.content = part.content.replace(
+                    call_input.prompt_placeholder, prompt
+                )
+
+    response = await model_request(
+        model=model,
+        messages=pydantic_messages,
+        model_settings=cast(ModelSettings | None, call_input.model_parameters),
+        model_request_parameters=assemble_model_request_parameters(
+            cast(dict[str, Any] | None, call_input.output_schema),
+            cast(list[dict[str, Any]] | None, call_input.tools),
+            strict=True,
+            allow_text_output=False,
+        ),
+    )
+
+    result = LlmCallResult(
+        input=JSON(pydantic_ai_messages_to_openai_messages(pydantic_messages)),
+        output=(
+            JSON(
+                json.loads(response.text) if call_input.output_schema else response.text
+            )
+            if response.text
+            else None
+        ),
+        tool_calls=(
+            [
+                ToolCall(
+                    name=tc.tool_name,
+                    args=JSON(tc.args_as_dict()),
+                    tool_call_id=strawberry.ID(tc.tool_call_id),
+                )
+                for tc in response.tool_calls
+            ]
+            if response.tool_calls
+            else None
+        ),
+        usage=JSON(
+            {
+                "input_tokens": response.usage.input_tokens,
+                "output_tokens": response.usage.output_tokens,
+                "total_tokens": response.usage.total_tokens,
+            }
+        ),
+        cost=float(response.cost().total_price),
+        timestamp=response.timestamp,
+        reasoning=response.thinking,
+    )
+
+    return result
 
 
 # Create the schema
