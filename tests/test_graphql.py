@@ -7,6 +7,7 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from pixie.prompts.graphql import (
+    LlmCallUsage,
     schema,
     is_demo_mode,
     execute_single_llm_call,
@@ -395,7 +396,7 @@ class TestGraphQLMutations:
             input=JSON({"messages": []}),
             output=JSON({"response": "test"}),
             tool_calls=None,
-            usage=JSON({"tokens": 10}),
+            usage=LlmCallUsage(input_tokens=10, output_tokens=0, total_tokens=10),
             cost=0.01,
             timestamp=MagicMock(),
             reasoning=None,
@@ -420,7 +421,11 @@ class TestGraphQLMutations:
                 outputSchema: $outputSchema
             ) {
                 output
-                usage
+                usage {
+                    inputTokens
+                    outputTokens
+                    totalTokens
+                }
                 cost
             }
         }
@@ -442,7 +447,11 @@ class TestGraphQLMutations:
         assert "callLlm" in result.data
         call_result = result.data["callLlm"]
         assert call_result["output"] == {"response": "test"}
-        assert call_result["usage"] == {"tokens": 10}
+        assert call_result["usage"] == {
+            "inputTokens": 10,
+            "outputTokens": 0,
+            "totalTokens": 10,
+        }
         assert call_result["cost"] == 0.01
 
     @pytest.mark.asyncio
@@ -551,11 +560,9 @@ class TestExecuteSingleLlmCall:
 
         assert isinstance(result, LlmCallResult)
         assert result.output == {"result": "test"}
-        assert result.usage == {
-            "input_tokens": 10,
-            "output_tokens": 20,
-            "total_tokens": 30,
-        }
+        assert result.usage.input_tokens == 10
+        assert result.usage.output_tokens == 20
+        assert result.usage.total_tokens == 30
         assert result.cost == 0.01
         assert result.reasoning == "Test reasoning"
         assert result.tool_calls is None

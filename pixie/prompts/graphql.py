@@ -84,12 +84,21 @@ class ToolCall:
 
 
 @strawberry.type
+class LlmCallUsage:
+    """Token usage information for an LLM call."""
+
+    input_tokens: int
+    output_tokens: int
+    total_tokens: int
+
+
+@strawberry.type
 class LlmCallResult:
 
     input: JSON
     output: JSON | None
     tool_calls: list[ToolCall] | None
-    usage: JSON
+    usage: LlmCallUsage
     cost: float
     timestamp: datetime
     reasoning: str | None
@@ -388,12 +397,10 @@ async def execute_single_llm_call(
             if response.tool_calls
             else None
         ),
-        usage=JSON(
-            {
-                "input_tokens": response.usage.input_tokens,
-                "output_tokens": response.usage.output_tokens,
-                "total_tokens": response.usage.total_tokens,
-            }
+        usage=LlmCallUsage(
+            input_tokens=response.usage.input_tokens,
+            output_tokens=response.usage.output_tokens,
+            total_tokens=response.usage.total_tokens,
         ),
         cost=float(response.cost().total_price),
         timestamp=response.timestamp,
