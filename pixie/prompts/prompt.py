@@ -1,3 +1,4 @@
+from contextvars import ContextVar
 from copy import deepcopy
 from dataclasses import dataclass
 import json
@@ -116,6 +117,42 @@ def _mark_compiled_prompts_outdated(
                 variables=compiled_prompt.variables,
                 prompt=outdated_prompt,
             )
+
+
+_prompt_overrides: ContextVar[dict[str, str]] = ContextVar(
+    "prompt_overrides",
+    default={},
+)
+
+
+class prompt_overrides:
+    """Context manager for overriding prompt versions within a specific context.
+
+    Example usage:
+        with prompt_overrides({"my_prompt_id": "overridden template"}):
+            # Within this block, any compilation of the prompt with ID "my_prompt_id"
+            # will use the overridden template instead of the original.
+            ...
+    """
+
+    def __init__(self, overrides: dict[str, str]):
+        self.overrides = overrides
+        self.token = None
+
+    def __enter__(self):
+        current_overrides = _prompt_overrides.get()
+        new_overrides = {**current_overrides, **self.overrides}
+        self.token = _prompt_overrides.set(new_overrides)
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        if self.token is not None:
+            _prompt_overrides.reset(self.token)
+
+    async def __aenter__(self):
+        self.__enter__()
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        self.__exit__(exc_type, exc_val, exc_tb)
 
 
 DEFAULT_VERSION_ID = "v0"
@@ -264,8 +301,13 @@ class BasePrompt(BaseUntypedPrompt, Generic[TPromptVar]):
         *,
         version_id: str | None = None,
     ) -> str:
-        version_id = version_id or self._default_version
-        template_txt = self._versions[version_id]
+        overwrite = _prompt_overrides.get().get(self.id)
+        if overwrite:
+            version_id = "__override__"
+            template_txt = overwrite
+        else:
+            version_id = version_id or self._default_version
+            template_txt = self._versions[version_id]
         if self._variables_definition is not NoneType:
             if variables is None:
                 raise ValueError(
