@@ -63,6 +63,7 @@ def create_prompt(
     variables_definition: type[TPromptVar] = NoneType,
     *,
     description: str | None = None,
+    default: str | None = None,
 ) -> StorageBackedPrompt[TPromptVar]:
     if id in _registry:
         ret = _registry[id].prompt
@@ -71,7 +72,11 @@ def create_prompt(
                 f"Prompt with id '{id}' already exists with a different variables definition."
             )
         return ret
-    ret = StorageBackedPrompt(id=id, variables_definition=variables_definition)
+    ret = StorageBackedPrompt(
+        id=id,
+        variables_definition=variables_definition,
+        default=default,
+    )
     calling_module = _get_calling_module_name()
     _registry[id] = StorageBackedPromptWithRegistration(
         prompt=ret,
